@@ -23,8 +23,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class SettingsHook {
 
     private static final String TAG = "[BetterMSYK]";
+    private static final String MODULE_PACKAGE = "com.youngsix6.bettermsyk";
+    private static final String HIDDEN_TRIGGER_ICON = "my_img_hidden_trigger";
     private static final String SP_FILE = "system_properties";
     private static final String KEY_DEBUG_MODE = "isDebugMode";
+    private static final String KEY_VOLUME_TRIGGER = "isVolumeTriggerEnabled";
     private static final int DEBUG_ENTRY_TAP_COUNT = 7;
 
     // 缓存动态解析后的资源 ID（类级别，跨 Activity 实例共享）
@@ -192,8 +195,9 @@ public final class SettingsHook {
         debugLabel.setTextColor(colorFont333);
         debugLabel.setGravity(Gravity.CENTER_VERTICAL);
         try {
-            Drawable eyeIcon = res.getDrawable(sDrawMyImgEye, null);
-            debugLabel.setCompoundDrawablesWithIntrinsicBounds(eyeIcon, null, null, null);
+            Drawable triggerIcon = loadHiddenTriggerIcon(activity);
+            debugLabel.setCompoundDrawablesWithIntrinsicBounds(
+                    triggerIcon, null, null, null);
         } catch (Exception ignored) {}
         debugLabel.setCompoundDrawablePadding(pxX18);
         RelativeLayout.LayoutParams labelLp = new RelativeLayout.LayoutParams(
@@ -252,23 +256,119 @@ public final class SettingsHook {
         toggleFrame.addView(ivOff);
         toggleFrame.addView(ivOn);
 
-        // 9. 添加到布局
+        // 9. 音量触发行：与调试模式状态完全独立，但同样只在头像连点后显示。
+        final int volumeDividerId = View.generateViewId();
+        View volumeDivider = new View(activity);
+        volumeDivider.setId(volumeDividerId);
+        volumeDivider.setBackgroundColor(colorLine);
+        RelativeLayout.LayoutParams volumeDividerLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
+        volumeDividerLp.addRule(RelativeLayout.BELOW, debugClickAreaId);
+        volumeDividerLp.setMarginStart(pxX54);
+        volumeDivider.setLayoutParams(volumeDividerLp);
+
+        final int volumeClickAreaId = View.generateViewId();
+        View volumeClickArea = new View(activity);
+        volumeClickArea.setId(volumeClickAreaId);
+        try {
+            volumeClickArea.setBackground(res.getDrawable(sDrawTransOrFafafa, null));
+        } catch (Exception ignored) {}
+        RelativeLayout.LayoutParams volumeAreaLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
+        volumeAreaLp.addRule(RelativeLayout.BELOW, volumeDividerId);
+        volumeClickArea.setLayoutParams(volumeAreaLp);
+
+        TextView volumeLabel = new TextView(activity);
+        volumeLabel.setId(View.generateViewId());
+        volumeLabel.setText("音量触发");
+        volumeLabel.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
+        volumeLabel.setTextColor(colorFont333);
+        volumeLabel.setGravity(Gravity.CENTER_VERTICAL);
+        try {
+            Drawable triggerIcon = loadHiddenTriggerIcon(activity);
+            volumeLabel.setCompoundDrawablesWithIntrinsicBounds(
+                    triggerIcon, null, null, null);
+        } catch (Exception ignored) {}
+        volumeLabel.setCompoundDrawablePadding(pxX18);
+        RelativeLayout.LayoutParams volumeLabelLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
+        volumeLabelLp.addRule(RelativeLayout.BELOW, volumeDividerId);
+        volumeLabel.setLayoutParams(volumeLabelLp);
+
+        FrameLayout volumeToggleFrame = new FrameLayout(activity);
+        volumeToggleFrame.setId(View.generateViewId());
+        try {
+            volumeToggleFrame.setBackground(res.getDrawable(sDrawD8d8d8Green24, null));
+        } catch (Exception e) {
+            GradientDrawable gd = new GradientDrawable();
+            gd.setColor(Color.parseColor("#D8D8D8"));
+            gd.setCornerRadius(24f);
+            volumeToggleFrame.setBackground(gd);
+        }
+        RelativeLayout.LayoutParams volumeToggleLp =
+                new RelativeLayout.LayoutParams(pxX96, pxY48);
+        volumeToggleLp.addRule(RelativeLayout.ALIGN_PARENT_END);
+        volumeToggleLp.addRule(RelativeLayout.BELOW, volumeDividerId);
+        volumeToggleLp.topMargin = pxY36;
+        volumeToggleFrame.setLayoutParams(volumeToggleLp);
+        volumeToggleFrame.setPadding(pxY3, pxY3, pxY3, pxY3);
+
+        ImageView volumeIvOff = new ImageView(activity);
+        volumeIvOff.setId(View.generateViewId());
+        try {
+            volumeIvOff.setImageResource(sDrawWhiteBall);
+        } catch (Exception e) {
+            GradientDrawable gd = new GradientDrawable();
+            gd.setColor(Color.WHITE);
+            gd.setShape(GradientDrawable.OVAL);
+            volumeIvOff.setBackground(gd);
+        }
+        FrameLayout.LayoutParams volumeOffLp =
+                new FrameLayout.LayoutParams(pxY42, pxY42);
+        volumeOffLp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+        volumeIvOff.setLayoutParams(volumeOffLp);
+
+        ImageView volumeIvOn = new ImageView(activity);
+        volumeIvOn.setId(View.generateViewId());
+        try {
+            volumeIvOn.setImageResource(sDrawWhiteBall);
+        } catch (Exception e) {
+            GradientDrawable gd = new GradientDrawable();
+            gd.setColor(Color.WHITE);
+            gd.setShape(GradientDrawable.OVAL);
+            volumeIvOn.setBackground(gd);
+        }
+        FrameLayout.LayoutParams volumeOnLp =
+                new FrameLayout.LayoutParams(pxY42, pxY42);
+        volumeOnLp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+        volumeIvOn.setLayoutParams(volumeOnLp);
+
+        volumeToggleFrame.addView(volumeIvOff);
+        volumeToggleFrame.addView(volumeIvOn);
+
+        // 10. 添加到布局
         parent.addView(divider);
         parent.addView(debugClickArea);
         parent.addView(debugLabel);
         parent.addView(toggleFrame);
+        parent.addView(volumeDivider);
+        parent.addView(volumeClickArea);
+        parent.addView(volumeLabel);
+        parent.addView(volumeToggleFrame);
         XposedBridge.log(TAG + " views added, childCount=" + parent.getChildCount());
 
-        // 10. 把原本紧跟护眼模式的所有原始 View 整体移到调试模式之后。
+        // 11. 把原本紧跟护眼模式的所有原始 View 整体移到音量触发行之后。
         // 后续各行仍依赖 view_modify_password / view_clear_catch 等锚点，
         // 因此会随修改密码行自动顺延，无需逐行改写。
         rerouteOriginalChildrenBelow(
-                parent, originalChildCount, sIdViewProtectEyeMode, debugClickAreaId);
+                parent, originalChildCount, sIdViewProtectEyeMode, volumeClickAreaId);
 
-        // 11. 状态 + 点击
+        // 12. 两个开关分别读取、分别保存，互不联动。
         SharedPreferences sp = activity.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
         boolean isDebug = sp.getBoolean(KEY_DEBUG_MODE, false);
         updateToggleUI(ivOff, ivOn, toggleFrame, isDebug);
+        boolean isVolumeTrigger = sp.getBoolean(KEY_VOLUME_TRIGGER, false);
+        updateToggleUI(volumeIvOff, volumeIvOn, volumeToggleFrame, isVolumeTrigger);
 
         View.OnClickListener clickListener = new View.OnClickListener() {
             @Override
@@ -283,7 +383,21 @@ public final class SettingsHook {
         debugClickArea.setOnClickListener(clickListener);
         toggleFrame.setOnClickListener(clickListener);
 
-        XposedBridge.log(TAG + " injectDebugModeSwitch: SUCCESS");
+        View.OnClickListener volumeClickListener = new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                SharedPreferences sp = v.getContext()
+                        .getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
+                boolean cur = sp.getBoolean(KEY_VOLUME_TRIGGER, false);
+                sp.edit().putBoolean(KEY_VOLUME_TRIGGER, !cur).apply();
+                updateToggleUI(
+                        volumeIvOff, volumeIvOn, volumeToggleFrame, !cur);
+            }
+        };
+        volumeClickArea.setOnClickListener(volumeClickListener);
+        volumeToggleFrame.setOnClickListener(volumeClickListener);
+
+        XposedBridge.log(TAG + " hidden debug and volume switches injected: SUCCESS");
     }
 
     // ── 动态解析所有资源 ID ──
@@ -357,6 +471,27 @@ public final class SettingsHook {
         ivOff.setVisibility(isDebug ? View.GONE : View.VISIBLE);
         ivOn.setVisibility(isDebug ? View.VISIBLE : View.GONE);
         toggleFrame.setSelected(isDebug);
+    }
+
+    /**
+     * 从模块自身资源中按设备密度选取 24/36/48 px 图标。LSPatch 环境若无法
+     * 创建模块包 Context，则退回目标应用原有护眼图标，避免设置页缺图。
+     */
+    private static Drawable loadHiddenTriggerIcon(Activity activity) {
+        try {
+            Context moduleContext = activity.createPackageContext(
+                    MODULE_PACKAGE, Context.CONTEXT_IGNORE_SECURITY);
+            Resources moduleResources = moduleContext.getResources();
+            int iconId = moduleResources.getIdentifier(
+                    HIDDEN_TRIGGER_ICON, "drawable", MODULE_PACKAGE);
+            if (iconId != 0) {
+                return moduleResources.getDrawable(iconId, null);
+            }
+        } catch (Exception e) {
+            XposedBridge.log(TAG + " module icon fallback: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        return activity.getResources().getDrawable(sDrawMyImgEye, null);
     }
 
     private static int safeColor(Resources res, int resId, int fallback) {
