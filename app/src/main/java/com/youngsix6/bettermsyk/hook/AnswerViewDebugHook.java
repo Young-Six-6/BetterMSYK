@@ -7,6 +7,7 @@ import android.graphics.Typeface;
 import android.view.View;
 import android.view.animation.TranslateAnimation;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -124,14 +125,14 @@ public final class AnswerViewDebugHook {
                                 return;
                             }
                             forceDtkInfoShowAnswer(param.args[0]);
-                            XposedHelpers.setIntField(param.thisObject, "isShowAnswer", 1);
+                            forceActivityShowAnswer(param.thisObject);
                         }
 
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
                             if (isDebugMode(context)) {
-                                XposedHelpers.setIntField(param.thisObject, "isShowAnswer", 1);
+                                forceActivityShowAnswer(param.thisObject);
                                 postInstallDtkMaterialAnswerEntry(param.thisObject);
                             }
                         }
@@ -158,7 +159,7 @@ public final class AnswerViewDebugHook {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
                             if (isDebugMode(context)) {
-                                XposedHelpers.setIntField(param.thisObject, "isShowAnswer", 1);
+                                forceActivityShowAnswer(param.thisObject);
                             }
                         }
                     }
@@ -258,7 +259,7 @@ public final class AnswerViewDebugHook {
                 log(context, "dtk material answer entry missing");
                 return;
             }
-            XposedHelpers.setIntField(activity, "isShowAnswer", 1);
+            forceActivityShowAnswer(activity);
             try {
                 XposedHelpers.callMethod(activity, "materialTitle", true);
             } catch (Throwable ignored) {
@@ -299,9 +300,12 @@ public final class AnswerViewDebugHook {
     private static void showDtkAnswerMaterial(Object activity) {
         try {
             Context context = (Context) activity;
-            XposedHelpers.setIntField(activity, "isShowAnswer", 1);
+            log(context, "dtk answer click");
+            forceActivityShowAnswer(activity);
+            restoreDtkAnswerMaterials(activity);
+            logDtkAnswerState(activity);
             setBooleanByMethod(activity, "setAudioScaleChange", false);
-            XposedHelpers.callMethod(activity, "setMaterialType", 1);
+            setIntProperty(activity, "setMaterialType", "materialType", 1);
             updateMaterialTitleStyle(activity, true);
             XposedHelpers.callMethod(activity, "updateMaterialView");
             log(context, "dtk material answer shown");
@@ -309,6 +313,8 @@ public final class AnswerViewDebugHook {
         } catch (Throwable t) {
             XposedBridge.log(TAG + " showDtkAnswerMaterial failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
+            toast((Context) activity, "答案解析打开失败："
+                    + t.getClass().getSimpleName());
         }
     }
 
@@ -316,7 +322,7 @@ public final class AnswerViewDebugHook {
         try {
             Context context = (Context) activity;
             setBooleanByMethod(activity, "setAudioScaleChange", false);
-            XposedHelpers.callMethod(activity, "setMaterialType", 0);
+            setIntProperty(activity, "setMaterialType", "materialType", 0);
             updateMaterialTitleStyle(activity, false);
             XposedHelpers.callMethod(activity, "updateMaterialView");
             log(context, "dtk material question shown");
@@ -359,6 +365,46 @@ public final class AnswerViewDebugHook {
         try {
             XposedHelpers.callMethod(target, methodName, value);
         } catch (Throwable ignored) {
+        }
+    }
+
+    private static void forceActivityShowAnswer(Object activity) {
+        setIntProperty(activity, "setShowAnswer", "isShowAnswer", 1);
+    }
+
+    private static void setIntProperty(
+            Object target,
+            String setterName,
+            String fieldName,
+            int value
+    ) {
+        try {
+            XposedHelpers.callMethod(target, setterName, value);
+            return;
+        } catch (Throwable ignored) {
+        }
+        XposedHelpers.setIntField(target, fieldName, value);
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void restoreDtkAnswerMaterials(Object activity) {
+        try {
+            Object target = XposedHelpers.callMethod(activity, "getMAmaterialList");
+            if (!(target instanceof java.util.List)
+                    || !((java.util.List<?>) target).isEmpty()) {
+                return;
+            }
+            Object info = XposedHelpers.callMethod(activity, "getDtkInfo");
+            Object source = XposedHelpers.callMethod(info, "getDtkAnswerMaterialList");
+            if (source instanceof java.util.List
+                    && !((java.util.List<?>) source).isEmpty()) {
+                ((java.util.List) target).addAll((java.util.List) source);
+                log((Context) activity, "dtk answer materials restored: "
+                        + ((java.util.List<?>) source).size());
+            }
+        } catch (Throwable t) {
+            log((Context) activity, "dtk answer material restore skipped: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
 
@@ -416,6 +462,10 @@ public final class AnswerViewDebugHook {
     private static boolean isDebugMode(Context context) {
         SharedPreferences sp = context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
         return sp.getBoolean(KEY_DEBUG_MODE, false);
+    }
+
+    private static void toast(Context context, String message) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
     }
 
     private static void log(Context context, String message) {
