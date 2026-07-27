@@ -6,8 +6,10 @@ import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
@@ -41,16 +43,21 @@ public final class HomeworkDebugHook {
     private static final String TAG = "[BetterMSYK]";
     private static final String SP_FILE = "system_properties";
     private static final String KEY_DEBUG_MODE = "isDebugMode";
+    private static final String KEY_VOLUME_TRIGGER = "isVolumeTriggerEnabled";
     private static final String TARGET_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.student.homework.detail.dtk.StudentDtkHwDetailActivity";
     private static final String HW_ANSWER_MANAGER =
             "com.zdsoft.newsquirrel.android.activity.student.homework.analysis.util.HwAnswerManager";
     private static final String BUTTON_TAG = "bettermsyk_one_click_correct";
+    private static final int VOLUME_TRIGGER_PRESS_COUNT = 3;
+    private static final long VOLUME_TRIGGER_WINDOW_MS = 2000L;
     private static final Map<Activity, Boolean> RESUME_LOGGED =
             Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<View, Boolean> VISIBLE_LOGGED =
             Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<String, AnswerLookup> ANSWER_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Activity, VolumeTriggerState> VOLUME_TRIGGER_STATES =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private HomeworkDebugHook() {
     }
@@ -76,6 +83,43 @@ public final class HomeworkDebugHook {
                                 log(activity, "inject button error: "
                                         + t.getClass().getSimpleName() + ": " + t.getMessage());
                             }
+                        }
+                    }
+            );
+            XposedHelpers.findAndHookMethod(
+                    activityClass,
+                    "onKeyDown",
+                    int.class,
+                    KeyEvent.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            int keyCode = (Integer) param.args[0];
+                            KeyEvent event = (KeyEvent) param.args[1];
+                            if (keyCode != KeyEvent.KEYCODE_VOLUME_DOWN
+                                    || event == null
+                                    || event.getRepeatCount() != 0) {
+                                return;
+                            }
+
+                            Activity activity = (Activity) param.thisObject;
+                            if (!isVolumeTriggerEnabled(activity)
+                                    || readHomeworkStatus(activity) != 0) {
+                                return;
+                            }
+
+                            int pressCount = recordVolumeDownPress(activity);
+                            log(activity, "volume trigger progress: " + pressCount
+                                    + "/" + VOLUME_TRIGGER_PRESS_COUNT);
+                            if (pressCount >= VOLUME_TRIGGER_PRESS_COUNT) {
+                                resetVolumeTriggerState(activity);
+                                log(activity, "one-click fill triggered by three volume downs");
+                                toast(activity, "由音量键触发填充");
+                                autoFillDtkObjectiveAnswers(
+                                        activity, lpparam.classLoader);
+                            }
+                            // 避免触发回填的同时把系统音量连续降低。
+                            param.setResult(true);
                         }
                     }
             );
@@ -197,10 +241,6 @@ public final class HomeworkDebugHook {
         }
     }
 
-    /**
-     * 目标页面以 hwStatus == 0 表示未提交、仍可编辑。
-     * 无法读取状态时返回最小值并隐藏按钮，避免在未知状态下误显示。
-     */
     private static int readHomeworkStatus(Activity activity) {
         try {
             Object status = XposedHelpers.callMethod(activity, "getHwStatus");
@@ -212,6 +252,34 @@ public final class HomeworkDebugHook {
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
         return Integer.MIN_VALUE;
+    }
+
+    private static boolean isVolumeTriggerEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_VOLUME_TRIGGER, false);
+    }
+
+    private static int recordVolumeDownPress(Activity activity) {
+        long now = SystemClock.elapsedRealtime();
+        synchronized (VOLUME_TRIGGER_STATES) {
+            VolumeTriggerState state = VOLUME_TRIGGER_STATES.get(activity);
+            if (state == null) {
+                state = new VolumeTriggerState();
+                VOLUME_TRIGGER_STATES.put(activity, state);
+            }
+            if (now - state.lastPressTime > VOLUME_TRIGGER_WINDOW_MS) {
+                state.pressCount = 0;
+            }
+            state.lastPressTime = now;
+            state.pressCount++;
+            return state.pressCount;
+        }
+    }
+
+    private static void resetVolumeTriggerState(Activity activity) {
+        synchronized (VOLUME_TRIGGER_STATES) {
+            VOLUME_TRIGGER_STATES.remove(activity);
+        }
     }
 
     private static void autoFillDtkObjectiveAnswers(Activity activity, ClassLoader classLoader) {
@@ -261,18 +329,29 @@ public final class HomeworkDebugHook {
                 return;
             }
 
-            Object presenter = XposedHelpers.getObjectField(activity, "MvpPre");
-            if (presenter != null && filledCount > 0) {
-                XposedHelpers.callMethod(presenter, "saveOptionAnswer", false);
-                log(activity, "saveOptionAnswer(false) called");
-            }
-            XposedHelpers.callMethod(activity, "updateTheDoView");
-            log(activity, "updateTheDoView called");
-
             if (filledCount <= 0) {
                 toast(activity, "未找到可回填的客观题");
                 return;
             }
+
+            try {
+                Object presenter = XposedHelpers.getObjectField(activity, "MvpPre");
+                if (presenter != null) {
+                    XposedHelpers.callMethod(presenter, "saveOptionAnswer", false);
+                    log(activity, "saveOptionAnswer(false) called");
+                }
+            } catch (Throwable t) {
+                log(activity, "saveOptionAnswer(false) compatibility warning: "
+                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+            try {
+                XposedHelpers.callMethod(activity, "updateTheDoView");
+                log(activity, "updateTheDoView called");
+            } catch (Throwable t) {
+                log(activity, "updateTheDoView compatibility warning: "
+                        + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+            refreshAnswerList(activity);
             toast(activity, "已回填 " + filledCount + " 题，不会自动提交");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " autoFillDtkObjectiveAnswers ERROR: "
@@ -498,9 +577,62 @@ public final class HomeworkDebugHook {
             for (int i = 0; i < array.length(); i++) {
                 blankList.add(array.optString(i, ""));
             }
-            XposedHelpers.callMethod(option, "setBlankList", blankList);
+
+            Object current = XposedHelpers.callMethod(option, "getBlankList");
+            if (current instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> currentList = (List<Object>) current;
+                currentList.clear();
+                currentList.addAll(blankList);
+            } else {
+                XposedHelpers.callMethod(option, "setBlankList", blankList);
+            }
         } catch (Throwable t) {
             XposedBridge.log(TAG + " applyBlankList failed: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
+    }
+
+    private static void refreshAnswerList(Activity activity) {
+        try {
+            int recyclerId = activity.getResources().getIdentifier(
+                    "rec_answer", "id", activity.getPackageName());
+            View recycler = recyclerId == 0 ? null : activity.findViewById(recyclerId);
+            Object adapter = null;
+            try {
+                adapter = XposedHelpers.callMethod(activity, "getAdapter");
+            } catch (Throwable ignored) {
+                if (recycler != null) {
+                    adapter = XposedHelpers.callMethod(recycler, "getAdapter");
+                }
+            }
+            if (adapter != null) {
+                XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+            }
+            if (recycler == null) {
+                return;
+            }
+            recycler.requestLayout();
+            recycler.invalidate();
+            final Object finalAdapter = adapter;
+            recycler.post(() -> {
+                try {
+                    Object currentAdapter = finalAdapter != null
+                            ? finalAdapter
+                            : XposedHelpers.callMethod(recycler, "getAdapter");
+                    if (currentAdapter != null) {
+                        XposedHelpers.callMethod(currentAdapter, "notifyDataSetChanged");
+                    }
+                    recycler.requestLayout();
+                    recycler.invalidate();
+                } catch (Throwable t) {
+                    log(activity, "delayed answer refresh warning: "
+                            + t.getClass().getSimpleName() + ": " + t.getMessage());
+                }
+            });
+            log(activity, "answer list refresh scheduled");
+        } catch (Throwable t) {
+            log(activity, "answer list refresh warning: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
@@ -615,6 +747,11 @@ public final class HomeworkDebugHook {
         int remoteHitCount;
         int createdBucketCount;
         int failedBucketCount;
+    }
+
+    private static final class VolumeTriggerState {
+        int pressCount;
+        long lastPressTime;
     }
 
     private static final class AnswerLookup {
