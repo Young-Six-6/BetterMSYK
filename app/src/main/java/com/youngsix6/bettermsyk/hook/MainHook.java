@@ -34,6 +34,8 @@ public class MainHook implements IXposedHookLoadPackage {
         // 初始化各个 Hook 模块
         SignatureCheckHook.init(lpparam);
         UpdateControlHook.init(lpparam);
+        CacheControlHook.init(lpparam);
+        SplashImageHook.init(lpparam);
         CustomMacHook.init(lpparam);
         ProtocolOverrideHook.init(lpparam);
         AboutDebugCodeHook.init(lpparam);
