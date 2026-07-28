@@ -2,6 +2,7 @@ package com.youngsix6.bettermsyk.hook;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Color;
@@ -28,16 +29,25 @@ public final class SettingsHook {
     private static final String SP_FILE = "system_properties";
     private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String KEY_VOLUME_TRIGGER = "isVolumeTriggerEnabled";
+    private static final String HIDDEN_PAGE_ACTIVITY =
+            "com.zdsoft.newsquirrel.android.activity.teacher.AboutMsykActivity";
+    static final String EXTRA_OSS_TOOLKIT =
+            "com.youngsix6.bettermsyk.extra.OSS_TOOLKIT";
+    static final String EXTRA_MODULE_SETTINGS =
+            "com.youngsix6.bettermsyk.extra.MODULE_SETTINGS";
     private static final int DEBUG_ENTRY_TAP_COUNT = 7;
 
     // 缓存动态解析后的资源 ID（类级别，跨 Activity 实例共享）
     private static volatile boolean sIdsResolved = false;
     private static int sIdStuHeadIcon;
     private static int sIdViewProtectEyeMode;
+    private static int sIdViewAboutUs;
     private static int sDrawTransOrFafafa;
     private static int sDrawD8d8d8Green24;
     private static int sDrawWhiteBall;
     private static int sDrawMyImgEye;
+    private static int sDrawMyImgAbout;
+    private static int sDrawArrowRightCcc;
     private static int sColorLineE8;
     private static int sColorFont333;
     private static int sDimX18;
@@ -362,6 +372,7 @@ public final class SettingsHook {
         // 因此会随修改密码行自动顺延，无需逐行改写。
         rerouteOriginalChildrenBelow(
                 parent, originalChildCount, sIdViewProtectEyeMode, volumeClickAreaId);
+        injectHiddenPageEntries(activity);
 
         // 12. 两个开关分别读取、分别保存，互不联动。
         SharedPreferences sp = activity.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
@@ -400,6 +411,116 @@ public final class SettingsHook {
         XposedBridge.log(TAG + " hidden debug and volume switches injected: SUCCESS");
     }
 
+    /**
+     * 在原“关于平台”下方依次插入隐藏工具页入口。两个页面均复用目标应用的
+     * 关于页面作为容器，以保留原生标题栏、返回按钮及 LSPatch 兼容性。
+     */
+    private static void injectHiddenPageEntries(Activity activity) {
+        View aboutView = activity.findViewById(sIdViewAboutUs);
+        if (aboutView == null || !(aboutView.getParent() instanceof ViewGroup)) {
+            XposedBridge.log(TAG + " view_about_us missing; hidden pages not injected");
+            return;
+        }
+
+        ViewGroup parent = (ViewGroup) aboutView.getParent();
+        int originalChildCount = parent.getChildCount();
+        int ossClickAreaId = addHiddenPageEntry(
+                activity, parent, sIdViewAboutUs, "OSS ToolKit",
+                v -> openHiddenPage(activity, EXTRA_OSS_TOOLKIT));
+        int moduleSettingsClickAreaId = addHiddenPageEntry(
+                activity, parent, ossClickAreaId, "模块设置",
+                v -> openHiddenPage(activity, EXTRA_MODULE_SETTINGS));
+        rerouteOriginalChildrenBelow(
+                parent, originalChildCount, sIdViewAboutUs,
+                moduleSettingsClickAreaId);
+        XposedBridge.log(TAG
+                + " OSS ToolKit and module settings entries injected below about platform");
+    }
+
+    private static int addHiddenPageEntry(
+            Activity activity, ViewGroup parent, int belowId, String title,
+            View.OnClickListener clickListener) {
+        Resources res = activity.getResources();
+        int pxY120 = res.getDimensionPixelSize(sDimY120);
+        int pxY1 = res.getDimensionPixelSize(sDimY1);
+        int pxX54 = res.getDimensionPixelSize(sDimX54);
+        int pxX18 = res.getDimensionPixelSize(sDimX18);
+        float textSize = res.getDimensionPixelSize(sDimX30);
+        int colorLine = safeColor(
+                res, sColorLineE8, Color.parseColor("#E8E8E8"));
+        int colorFont333 = safeColor(
+                res, sColorFont333, Color.parseColor("#333333"));
+
+        int dividerId = View.generateViewId();
+        View divider = new View(activity);
+        divider.setId(dividerId);
+        divider.setBackgroundColor(colorLine);
+        RelativeLayout.LayoutParams dividerLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
+        dividerLp.addRule(RelativeLayout.BELOW, belowId);
+        dividerLp.setMarginStart(pxX54);
+        divider.setLayoutParams(dividerLp);
+
+        int clickAreaId = View.generateViewId();
+        View clickArea = new View(activity);
+        clickArea.setId(clickAreaId);
+        try {
+            clickArea.setBackground(res.getDrawable(sDrawTransOrFafafa, null));
+        } catch (Exception ignored) {
+        }
+        RelativeLayout.LayoutParams areaLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
+        areaLp.addRule(RelativeLayout.BELOW, dividerId);
+        clickArea.setLayoutParams(areaLp);
+
+        TextView label = new TextView(activity);
+        label.setId(View.generateViewId());
+        label.setText(title);
+        label.setTextSize(
+                android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
+        label.setTextColor(colorFont333);
+        label.setGravity(Gravity.CENTER_VERTICAL);
+        try {
+            label.setCompoundDrawablesWithIntrinsicBounds(
+                    res.getDrawable(sDrawMyImgAbout, null), null, null, null);
+        } catch (Exception ignored) {
+        }
+        label.setCompoundDrawablePadding(pxX18);
+        RelativeLayout.LayoutParams labelLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
+        labelLp.addRule(RelativeLayout.BELOW, dividerId);
+        label.setLayoutParams(labelLp);
+
+        ImageView arrow = new ImageView(activity);
+        arrow.setId(View.generateViewId());
+        try {
+            arrow.setImageResource(sDrawArrowRightCcc);
+        } catch (Exception ignored) {
+        }
+        RelativeLayout.LayoutParams arrowLp = new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
+        arrowLp.addRule(RelativeLayout.ALIGN_PARENT_END);
+        arrowLp.addRule(RelativeLayout.BELOW, dividerId);
+        arrow.setLayoutParams(arrowLp);
+
+        parent.addView(divider);
+        parent.addView(clickArea);
+        parent.addView(label);
+        parent.addView(arrow);
+        clickArea.setOnClickListener(clickListener);
+        label.setOnClickListener(clickListener);
+        arrow.setOnClickListener(clickListener);
+        return clickAreaId;
+    }
+
+    private static void openHiddenPage(Activity activity, String extra) {
+        Intent intent = new Intent();
+        intent.setClassName(activity.getPackageName(), HIDDEN_PAGE_ACTIVITY);
+        intent.putExtra("isStudentType", true);
+        intent.putExtra(extra, true);
+        activity.startActivity(intent);
+    }
+
     // ── 动态解析所有资源 ID ──
 
     private static void ensureIdsResolved(Resources res, String pkg) {
@@ -418,12 +539,15 @@ public final class SettingsHook {
 
         sIdStuHeadIcon = res.getIdentifier("iv_stu_head_icon", "id", pkg);
         sIdViewProtectEyeMode = res.getIdentifier("view_protect_eye_mode", "id", pkg);
+        sIdViewAboutUs = res.getIdentifier("view_about_us", "id", pkg);
         XposedBridge.log(TAG + " ids: protEye=" + sIdViewProtectEyeMode);
 
         sDrawTransOrFafafa  = res.getIdentifier("trans_or_fafafa_selector",          "drawable", pkg);
         sDrawD8d8d8Green24  = res.getIdentifier("d8d8d8_or_student_green_24_corner", "drawable", pkg);
         sDrawWhiteBall      = res.getIdentifier("white_ball",                         "drawable", pkg);
         sDrawMyImgEye       = res.getIdentifier("my_img_eye",                         "drawable", pkg);
+        sDrawMyImgAbout     = res.getIdentifier("my_img_about",                       "drawable", pkg);
+        sDrawArrowRightCcc  = res.getIdentifier("icon_arrow_right_ccc",               "drawable", pkg);
         sColorLineE8  = res.getIdentifier("line_E8E8E8", "color", pkg);
         sColorFont333 = res.getIdentifier("font_333333", "color", pkg);
 

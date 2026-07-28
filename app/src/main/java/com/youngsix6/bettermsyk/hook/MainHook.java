@@ -40,5 +40,8 @@ public class MainHook implements IXposedHookLoadPackage {
         LearningProjectCfgHook.init(lpparam);
         AnswerViewDebugHook.init(lpparam);
         HomeworkDebugHook.init(lpparam);
+        HomeworkListDebugHook.init(lpparam);
+        OssToolkitHook.init(lpparam);
+        ModuleSettingsHook.init(lpparam);
     }
 }
