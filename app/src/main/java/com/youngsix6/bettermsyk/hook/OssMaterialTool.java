@@ -2,6 +2,7 @@ package com.youngsix6.bettermsyk.hook;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.content.res.ColorStateList;
 import android.content.ContentResolver;
 import android.content.Intent;
@@ -22,6 +23,7 @@ import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -61,10 +63,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * OSS_Plus.py 的 Android 图形化实现。
- *
- * <p>目标 App 的登录态、请求签名规则和内置阿里云 OSS SDK 均通过目标进程
- * ClassLoader 复用，模块自身不保存账号密码或长期 OSS 密钥。</p>
+ * OSS_Plus Android 图形化实现。（原脚本参github）
  */
 final class OssMaterialTool {
 
@@ -79,9 +78,12 @@ final class OssMaterialTool {
     private static final String OSS_BUCKET = "msyk";
     private static final String OSS_ENDPOINT =
             "https://oss-cn-shanghai.aliyuncs.com";
-    private static final int PICK_IMAGE_REQUEST = 0x6F53;
-    private static final int MAX_LOCAL_IMAGE_BYTES = 35 * 1024 * 1024;
+    private static final int PICK_FILE_REQUEST = 0x6F53;
+    private static final int MAX_LOCAL_FILE_BYTES = 50 * 1024 * 1024;
     private static final int MAX_PREVIEW_BYTES = 16 * 1024 * 1024;
+    private static final int MODE_ALL = 0;
+    private static final int MODE_STUDENT = 1;
+    private static final int MODE_MATERIAL = 2;
 
     private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(3);
     private static final Map<Activity, Controller> CONTROLLERS =
@@ -98,13 +100,13 @@ final class OssMaterialTool {
 
     static void onActivityResult(Activity activity, int requestCode,
                                  int resultCode, Intent data) {
-        if (requestCode != PICK_IMAGE_REQUEST || resultCode != Activity.RESULT_OK
+        if (requestCode != PICK_FILE_REQUEST || resultCode != Activity.RESULT_OK
                 || data == null || data.getData() == null) {
             return;
         }
         Controller controller = CONTROLLERS.get(activity);
         if (controller != null) {
-            controller.acceptImage(data);
+            controller.acceptFile(data);
         }
     }
 
@@ -117,19 +119,24 @@ final class OssMaterialTool {
         private final LinearLayout host;
         private final ClassLoader classLoader;
         private final AtomicInteger previewGeneration = new AtomicInteger();
+        private final List<ImageItem> allItems = new ArrayList<>();
         private final List<ImageItem> items = new ArrayList<>();
 
         private EditText homeworkIdInput;
         private RadioGroup modeGroup;
+        private RadioButton allMode;
         private RadioButton studentMode;
+        private CheckBox hideDirectoryFiles;
         private Button loadButton;
         private Spinner itemSpinner;
         private TextView itemDetails;
         private ImageView remotePreview;
         private Button openRemoteButton;
+        private Button downloadButton;
         private Button chooseButton;
         private ImageView localPreview;
         private TextView localDetails;
+        private Button openLocalButton;
         private Button replaceButton;
         private Button recheckButton;
         private ProgressBar progress;
@@ -139,7 +146,10 @@ final class OssMaterialTool {
         private byte[] selectedBytes;
         private String selectedMime;
         private String selectedName;
+        private Uri selectedUri;
         private String lastUploadedDigest;
+        private String loadedHomeworkName = "";
+        private String loadedNote = "";
 
         Controller(Activity activity, LinearLayout host, ClassLoader classLoader) {
             this.activity = activity;
@@ -189,13 +199,14 @@ final class OssMaterialTool {
             landscapeRoot.addView(rightScroll, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.MATCH_PARENT, 0.63f));
 
-            TextView heading = text("OSS 材料替换", 24,
+            TextView heading = text("OSS ToolKit", 24,
                     Color.parseColor("#18201B"));
             heading.setTypeface(Typeface.DEFAULT_BOLD);
             leftContent.addView(heading);
 
             TextView intro = text(
-                    "使用当前登录账号读取作业图片，并在相同 OSS Key 上安全覆盖。"
+                    "使用当前登录账号读取作业文件，先删除目标 OSS 对象，"
+                            + "再以相同 OSS Key 上传新文件。"
                             + "替换不会修改作业数据库记录，请确认目标无误。",
                     13, Color.parseColor("#536158"));
             LinearLayout.LayoutParams introLp = matchWrapLp();
@@ -236,6 +247,10 @@ final class OssMaterialTool {
 
             modeGroup = new RadioGroup(activity);
             modeGroup.setOrientation(LinearLayout.HORIZONTAL);
+            allMode = new RadioButton(activity);
+            allMode.setId(View.generateViewId());
+            allMode.setText("全部");
+            styleRadio(allMode);
             studentMode = new RadioButton(activity);
             studentMode.setId(View.generateViewId());
             studentMode.setText("学生答案");
@@ -244,16 +259,36 @@ final class OssMaterialTool {
             materialMode.setId(View.generateViewId());
             materialMode.setText("作业材料 / 解析");
             styleRadio(materialMode);
+            modeGroup.addView(allMode, new RadioGroup.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.72f));
             modeGroup.addView(studentMode, new RadioGroup.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             modeGroup.addView(materialMode, new RadioGroup.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            modeGroup.check(studentMode.getId());
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.35f));
+            modeGroup.check(allMode.getId());
             LinearLayout.LayoutParams modeLp = matchWrapLp();
             modeLp.topMargin = dp(6);
             queryCard.addView(modeGroup, modeLp);
 
-            loadButton = filledButton("读取图片列表");
+            hideDirectoryFiles = new CheckBox(activity);
+            hideDirectoryFiles.setText("隐藏目录下其他文件");
+            hideDirectoryFiles.setTextSize(13);
+            hideDirectoryFiles.setTextColor(Color.parseColor("#34483B"));
+            hideDirectoryFiles.setChecked(true);
+            hideDirectoryFiles.setButtonTintList(new ColorStateList(
+                    new int[][]{
+                            new int[]{android.R.attr.state_checked},
+                            new int[]{}
+                    },
+                    new int[]{
+                            Color.parseColor("#386A4D"),
+                            Color.parseColor("#77857B")
+                    }));
+            LinearLayout.LayoutParams directoryToggleLp = matchWrapLp();
+            directoryToggleLp.topMargin = dp(2);
+            queryCard.addView(hideDirectoryFiles, directoryToggleLp);
+
+            loadButton = filledButton("读取文件列表");
             LinearLayout.LayoutParams loadLp = matchWrapLp();
             loadLp.topMargin = dp(10);
             queryCard.addView(loadButton, loadLp);
@@ -289,13 +324,13 @@ final class OssMaterialTool {
             statusSurface.addView(status, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            TextView compareHeading = text("图片对照", 20,
+            TextView compareHeading = text("文件对照", 20,
                     Color.parseColor("#18201B"));
             compareHeading.setTypeface(Typeface.DEFAULT_BOLD);
             rightContent.addView(compareHeading);
 
             TextView compareHint = text(
-                    "左侧为当前远程对象，右侧为即将覆盖的新图片。",
+                    "左侧为当前远程对象，右侧为删除原对象后即将上传的新文件。",
                     13, Color.parseColor("#536158"));
             LinearLayout.LayoutParams compareHintLp = matchWrapLp();
             compareHintLp.topMargin = dp(4);
@@ -313,7 +348,7 @@ final class OssMaterialTool {
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             targetLp.rightMargin = dp(8);
             previewRow.addView(targetCard, targetLp);
-            targetCard.addView(sectionTitle("2. 当前 OSS 图片"));
+            targetCard.addView(sectionTitle("2. 当前 OSS 文件"));
 
             itemSpinner = new Spinner(activity);
             itemSpinner.setVisibility(View.GONE);
@@ -339,7 +374,7 @@ final class OssMaterialTool {
                 }
             });
 
-            itemDetails = text("请先在左侧读取图片列表", 12,
+            itemDetails = text("请先在左侧读取文件列表", 12,
                     Color.parseColor("#536158"));
             itemDetails.setTextIsSelectable(true);
             LinearLayout.LayoutParams detailsLp = matchWrapLp();
@@ -353,21 +388,29 @@ final class OssMaterialTool {
             remotePreviewLp.topMargin = dp(10);
             targetCard.addView(remotePreview, remotePreviewLp);
 
-            openRemoteButton = outlinedButton("用系统应用打开原图");
+            openRemoteButton = outlinedButton("用系统应用打开");
             openRemoteButton.setEnabled(false);
             LinearLayout.LayoutParams openLp = matchWrapLp();
             openLp.topMargin = dp(8);
             targetCard.addView(openRemoteButton, openLp);
             openRemoteButton.setOnClickListener(v -> openRemote());
 
+            downloadButton = outlinedButton("下载文件");
+            downloadButton.setEnabled(false);
+            LinearLayout.LayoutParams downloadLp = matchWrapLp();
+            downloadLp.topMargin = dp(8);
+            targetCard.addView(downloadButton, downloadLp);
+            downloadButton.setOnClickListener(v -> downloadRemote());
+
             LinearLayout localCard = card();
             LinearLayout.LayoutParams localLp = new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             localLp.leftMargin = dp(8);
             previewRow.addView(localCard, localLp);
-            localCard.addView(sectionTitle("3. 新的替换图片"));
+            localCard.addView(sectionTitle("3. 新的替换文件"));
 
-            chooseButton = tonalButton("从设备选择图片");
+            chooseButton = tonalButton("从设备选择文件");
+            chooseButton.setEnabled(false);
             LinearLayout.LayoutParams chooseLp = matchWrapLp();
             chooseLp.topMargin = dp(8);
             localCard.addView(chooseButton, chooseLp);
@@ -380,12 +423,19 @@ final class OssMaterialTool {
             localPreviewLp.topMargin = dp(10);
             localCard.addView(localPreview, localPreviewLp);
 
-            localDetails = text("尚未选择本地图片", 12,
+            localDetails = text("尚未选择本地文件", 12,
                     Color.parseColor("#536158"));
             localDetails.setTextIsSelectable(true);
             LinearLayout.LayoutParams localDetailsLp = matchWrapLp();
             localDetailsLp.topMargin = dp(8);
             localCard.addView(localDetails, localDetailsLp);
+
+            openLocalButton = outlinedButton("用系统应用预览所选文件");
+            openLocalButton.setEnabled(false);
+            LinearLayout.LayoutParams openLocalLp = matchWrapLp();
+            openLocalLp.topMargin = dp(8);
+            localCard.addView(openLocalButton, openLocalLp);
+            openLocalButton.setOnClickListener(v -> openLocal());
 
             replaceButton = dangerButton("确认替换");
             replaceButton.setEnabled(false);
@@ -400,6 +450,13 @@ final class OssMaterialTool {
             recheckLp.topMargin = dp(8);
             localCard.addView(recheckButton, recheckLp);
             recheckButton.setOnClickListener(v -> recheckCdn());
+
+            hideDirectoryFiles.setOnCheckedChangeListener(
+                    (buttonView, checked) -> {
+                        if (!allItems.isEmpty()) {
+                            rebuildVisibleItems();
+                        }
+                    });
         }
 
         private void readCurrentUserLabel(TextView label) {
@@ -420,14 +477,25 @@ final class OssMaterialTool {
                 homeworkIdInput.setError("请输入作业 ID");
                 return;
             }
-            boolean student = modeGroup.getCheckedRadioButtonId() == studentMode.getId();
-            setBusy(true, student ? "正在读取学生答案图片…" : "正在读取并扫描材料目录…");
+            if (!homeworkId.matches("\\d+")) {
+                homeworkIdInput.setError("作业 ID 必须是数字");
+                return;
+            }
+            int mode = selectedMode();
+            setBusy(true, mode == MODE_STUDENT
+                    ? "正在读取学生答案文件…"
+                    : mode == MODE_MATERIAL
+                    ? "正在读取并扫描材料目录…"
+                    : "正在读取全部作业文件并扫描材料目录…");
             selectedItem = null;
+            allItems.clear();
             items.clear();
             itemSpinner.setVisibility(View.GONE);
             itemDetails.setText("正在读取…");
             remotePreview.setImageDrawable(null);
             openRemoteButton.setEnabled(false);
+            downloadButton.setEnabled(false);
+            chooseButton.setEnabled(false);
             updateReplaceEnabled();
             recheckButton.setVisibility(View.GONE);
             lastUploadedDigest = null;
@@ -436,30 +504,13 @@ final class OssMaterialTool {
                 try {
                     Session session = currentSession(classLoader);
                     FetchResult result = fetchItems(activity, classLoader,
-                            session, homeworkId, student);
+                            session, homeworkId, mode);
                     ui(() -> {
-                        items.clear();
-                        items.addAll(result.items);
-                        if (items.isEmpty()) {
-                            itemDetails.setText(student
-                                    ? "未找到学生答案图片。文字答案不属于 OSS 图片，无法在此替换。"
-                                    : "未找到可替换的材料或解析图片。");
-                            setBusy(false, result.note);
-                            return;
-                        }
-                        List<String> labels = new ArrayList<>();
-                        for (int i = 0; i < items.size(); i++) {
-                            labels.add((i + 1) + ". " + items.get(i).label);
-                        }
-                        ArrayAdapter<String> adapter = new ArrayAdapter<>(
-                                activity, android.R.layout.simple_spinner_item, labels);
-                        adapter.setDropDownViewResource(
-                                android.R.layout.simple_spinner_dropdown_item);
-                        itemSpinner.setAdapter(adapter);
-                        itemSpinner.setVisibility(View.VISIBLE);
-                        setBusy(false, "已读取 " + items.size() + " 张图片"
-                                + (result.note.isEmpty() ? "" : "\n" + result.note));
-                        selectItem(items.get(0));
+                        allItems.clear();
+                        allItems.addAll(result.items);
+                        loadedHomeworkName = result.homeworkName;
+                        loadedNote = result.note;
+                        rebuildVisibleItems();
                     });
                 } catch (Throwable t) {
                     logFailure("load OSS items", t);
@@ -471,6 +522,58 @@ final class OssMaterialTool {
             });
         }
 
+        private void rebuildVisibleItems() {
+            selectedItem = null;
+            items.clear();
+            boolean hideDirectory = hideDirectoryFiles.isChecked();
+            int hiddenCount = 0;
+            for (ImageItem item : allItems) {
+                if (hideDirectory
+                        && "目录下其他文件".equals(item.category)) {
+                    hiddenCount++;
+                } else {
+                    items.add(item);
+                }
+            }
+
+            itemSpinner.setAdapter(null);
+            itemSpinner.setVisibility(View.GONE);
+            remotePreview.setImageDrawable(null);
+            remotePreview.clearColorFilter();
+            openRemoteButton.setEnabled(false);
+            downloadButton.setEnabled(false);
+            chooseButton.setEnabled(false);
+            lastUploadedDigest = null;
+            recheckButton.setVisibility(View.GONE);
+            updateReplaceEnabled();
+
+            if (items.isEmpty()) {
+                itemDetails.setText(allItems.isEmpty()
+                        ? "该作业未找到可操作的 OSS 文件。"
+                        : "目录下其他文件已隐藏，取消勾选后可查看。");
+                setBusy(false, loadedHomeworkName
+                        + (loadedNote.isEmpty() ? "" : "\n" + loadedNote));
+                return;
+            }
+
+            List<String> labels = new ArrayList<>();
+            for (int i = 0; i < items.size(); i++) {
+                labels.add((i + 1) + ". " + items.get(i).label);
+            }
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                    activity, android.R.layout.simple_spinner_item, labels);
+            adapter.setDropDownViewResource(
+                    android.R.layout.simple_spinner_dropdown_item);
+            itemSpinner.setAdapter(adapter);
+            itemSpinner.setVisibility(View.VISIBLE);
+            setBusy(false, loadedHomeworkName + "\n显示 "
+                    + items.size() + " 个文件"
+                    + (hiddenCount == 0
+                    ? "" : "，已隐藏目录下其他文件 " + hiddenCount + " 个")
+                    + (loadedNote.isEmpty() ? "" : "\n" + loadedNote));
+            selectItem(items.get(0));
+        }
+
         private void selectItem(ImageItem item) {
             if (selectedItem == item) {
                 return;
@@ -479,9 +582,13 @@ final class OssMaterialTool {
             lastUploadedDigest = null;
             recheckButton.setVisibility(View.GONE);
             itemDetails.setText("类型：" + item.category
+                    + "\n格式：" + item.familyLabel()
+                    + (item.extension.isEmpty() ? "" : "（." + item.extension + "）")
                     + "\nOSS Key：" + item.ossKey
                     + "\n公开地址：" + item.url);
             openRemoteButton.setEnabled(true);
+            downloadButton.setEnabled(true);
+            chooseButton.setEnabled(true);
             updateReplaceEnabled();
             loadRemotePreview(item);
         }
@@ -490,12 +597,20 @@ final class OssMaterialTool {
             int generation = previewGeneration.incrementAndGet();
             remotePreview.setImageDrawable(null);
             setPreviewBackground(remotePreview, Color.parseColor("#EEF3EF"));
+            if (!item.isImage()) {
+                remotePreview.setImageResource(android.R.drawable.ic_menu_save);
+                remotePreview.setColorFilter(Color.parseColor("#647168"));
+                return;
+            }
+            remotePreview.clearColorFilter();
             EXECUTOR.execute(() -> {
                 try {
-                    HttpBytes response = httpGet(item.url, MAX_PREVIEW_BYTES);
+                    HttpBytes response = httpGet(
+                            cacheBustedUrl(item.url, "bettermsyk_preview"),
+                            MAX_PREVIEW_BYTES);
                     Bitmap bitmap = decodePreview(response.bytes);
                     if (bitmap == null) {
-                        throw new IllegalArgumentException("远程内容不是可预览图片");
+                        throw new IllegalArgumentException("远程图片无法预览");
                     }
                     ui(() -> {
                         if (generation == previewGeneration.get()
@@ -528,35 +643,78 @@ final class OssMaterialTool {
                 Intent intent = new Intent(Intent.ACTION_VIEW, uri);
                 activity.startActivity(intent);
             } catch (Throwable t) {
-                status.setText("没有可打开该图片地址的应用：" + friendly(t));
+                status.setText("没有可打开该文件地址的应用：" + friendly(t));
+            }
+        }
+
+        private void downloadRemote() {
+            ImageItem item = selectedItem;
+            if (item == null) {
+                return;
+            }
+            try {
+                String separator = item.url.contains("?") ? "&" : "?";
+                Uri uri = Uri.parse(item.url + separator
+                        + "bettermsyk_download=" + System.currentTimeMillis());
+                DownloadManager manager = (DownloadManager) activity
+                        .getSystemService(Activity.DOWNLOAD_SERVICE);
+                if (manager == null) {
+                    throw new IllegalStateException("系统下载服务不可用");
+                }
+                DownloadManager.Request request = new DownloadManager.Request(uri)
+                        .setTitle(item.fileName())
+                        .setDescription("BetterMSYK OSS ToolKit")
+                        .setNotificationVisibility(
+                                DownloadManager.Request
+                                        .VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                if (!item.contentType.isEmpty()) {
+                    request.setMimeType(item.contentType);
+                }
+                long id = manager.enqueue(request);
+                status.setText("已交给系统下载，任务 ID：" + id);
+            } catch (Throwable t) {
+                status.setText("下载失败：" + friendly(t));
             }
         }
 
         private void launchPicker() {
+            if (selectedItem == null) {
+                status.setText("请先选择要替换的 OSS 文件");
+                return;
+            }
             try {
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("image/*");
+                intent.setType("*/*");
+                intent.putExtra(Intent.EXTRA_MIME_TYPES, supportedMimeTypes());
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
                         | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-                activity.startActivityForResult(intent, PICK_IMAGE_REQUEST);
+                activity.startActivityForResult(intent, PICK_FILE_REQUEST);
             } catch (Throwable t) {
-                status.setText("无法打开系统图片选择器：" + friendly(t));
+                status.setText("无法打开系统文件选择器：" + friendly(t));
             }
         }
 
-        void acceptImage(Intent data) {
+        void acceptFile(Intent data) {
             Uri uri = data.getData();
             if (uri == null) {
                 return;
             }
             try {
-                int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
-                activity.getContentResolver().takePersistableUriPermission(uri, flags);
+                if ((data.getFlags()
+                        & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+                    activity.getContentResolver().takePersistableUriPermission(
+                            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
             } catch (Throwable ignored) {
                 // 部分文件提供者不支持持久授权；当前页面的临时授权仍然有效。
             }
-            setBusy(true, "正在校验本地图片…");
+            ImageItem target = selectedItem;
+            if (target == null) {
+                status.setText("目标文件已失效，请重新选择");
+                return;
+            }
+            setBusy(true, "正在校验本地文件…");
             chooseButton.setEnabled(false);
             EXECUTOR.execute(() -> {
                 try {
@@ -568,54 +726,79 @@ final class OssMaterialTool {
                         if (in == null) {
                             throw new IllegalArgumentException("无法读取所选文件");
                         }
-                        bytes = readFully(in, MAX_LOCAL_IMAGE_BYTES);
+                        bytes = readFully(in, MAX_LOCAL_FILE_BYTES);
                     }
-                    Bitmap bitmap = decodePreview(bytes);
-                    if (bitmap == null && !hasKnownImageSignature(bytes)) {
-                        throw new IllegalArgumentException("所选文件不是有效图片");
-                    }
-                    if (mime == null || !mime.toLowerCase(Locale.ROOT)
-                            .startsWith("image/")) {
-                        mime = sniffMime(bytes);
-                    }
-                    final String finalMime = mime;
+                    String finalMime = validateUpload(
+                            bytes, name, target.ossKey, mime);
+                    String extension = fileExtension(name);
+                    Bitmap bitmap = isImageExtension(extension)
+                            ? decodePreview(bytes) : null;
                     ui(() -> {
                         selectedBytes = bytes;
                         selectedMime = finalMime;
                         selectedName = name;
+                        selectedUri = uri;
                         if (bitmap != null) {
+                            localPreview.clearColorFilter();
                             setPreviewBackground(
                                     localPreview, Color.parseColor("#EEF3EF"));
                             localPreview.setImageBitmap(bitmap);
                         } else {
-                            localPreview.setImageDrawable(null);
+                            localPreview.setImageResource(
+                                    android.R.drawable.ic_menu_save);
+                            localPreview.setColorFilter(
+                                    Color.parseColor("#647168"));
                             setPreviewBackground(
-                                    localPreview, Color.parseColor("#F3F0F0"));
+                                    localPreview, Color.parseColor("#EEF3EF"));
                         }
                         localDetails.setText("文件：" + name
+                                + "\n格式：" + fileFamilyLabel(extension)
                                 + "\n类型：" + finalMime
                                 + "\n大小：" + humanSize(bytes.length)
-                                + (bitmap == null
-                                ? "\n当前 Android 解码器不支持预览此格式，但可原样上传。"
+                                + (!isImageExtension(extension)
+                                ? "\n非图片文件请使用系统应用预览。"
+                                : bitmap == null
+                                ? "\n当前 Android 解码器无法预览，但格式校验已通过。"
                                 : ""));
                         chooseButton.setEnabled(true);
-                        setBusy(false, "本地图片校验通过");
+                        openLocalButton.setEnabled(true);
+                        setBusy(false, "本地文件校验通过");
                         updateReplaceEnabled();
                     });
                 } catch (Throwable t) {
-                    logFailure("read selected image", t);
+                    logFailure("read selected file", t);
                     ui(() -> {
                         selectedBytes = null;
                         selectedMime = null;
                         selectedName = null;
+                        selectedUri = null;
                         localPreview.setImageDrawable(null);
-                        localDetails.setText("图片读取失败：" + friendly(t));
+                        localPreview.clearColorFilter();
+                        localDetails.setText("文件读取失败：" + friendly(t));
                         chooseButton.setEnabled(true);
-                        setBusy(false, "请选择有效且不超过 35 MB 的图片");
+                        openLocalButton.setEnabled(false);
+                        setBusy(false, "请选择受支持且不超过 50 MB 的文件");
                         updateReplaceEnabled();
                     });
                 }
             });
+        }
+
+        private void openLocal() {
+            Uri uri = selectedUri;
+            if (uri == null) {
+                return;
+            }
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(uri,
+                        selectedMime == null || selectedMime.isEmpty()
+                                ? "*/*" : selectedMime);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.startActivity(intent);
+            } catch (Throwable t) {
+                status.setText("没有可预览所选文件的应用：" + friendly(t));
+            }
         }
 
         private void confirmReplace() {
@@ -625,20 +808,22 @@ final class OssMaterialTool {
                 return;
             }
             new AlertDialog.Builder(activity)
-                    .setTitle("确认覆盖 OSS 图片")
+                    .setTitle("确认删除并替换 OSS 文件")
                     .setMessage("目标：" + item.label
                             + "\nOSS Key：" + item.ossKey
-                            + "\n新图片：" + selectedName
+                            + "\n新文件：" + selectedName
                             + "（" + humanSize(bytes.length) + "）"
-                            + "\n\n此操作会覆盖远程对象，但不会提交或修改作业答案记录。")
+                            + "\n\n此操作会先删除远程对象，再上传新文件；"
+                            + "不会提交或修改作业答案记录。")
                     .setNegativeButton("取消", null)
                     .setPositiveButton("确认替换", (dialog, which) ->
-                            replace(item, bytes, selectedMime))
+                            replace(item, bytes, selectedName, selectedMime))
                     .show();
         }
 
-        private void replace(ImageItem item, byte[] bytes, String mime) {
-            setBusy(true, "正在获取临时凭证并上传…");
+        private void replace(
+                ImageItem item, byte[] bytes, String fileName, String mime) {
+            setBusy(true, "正在获取临时凭证，删除原对象后上传…");
             loadButton.setEnabled(false);
             chooseButton.setEnabled(false);
             replaceButton.setEnabled(false);
@@ -649,7 +834,9 @@ final class OssMaterialTool {
             EXECUTOR.execute(() -> {
                 try {
                     ReplacementResult result = replaceObject(
-                            activity, classLoader, item, bytes, mime);
+                            activity, classLoader,
+                            homeworkIdInput.getText().toString().trim(),
+                            item, bytes, fileName, mime);
                     ui(() -> {
                         lastUploadedDigest = result.digest;
                         loadButton.setEnabled(true);
@@ -658,7 +845,7 @@ final class OssMaterialTool {
                         setModeEnabled(true);
                         homeworkIdInput.setEnabled(true);
                         setBusy(false,
-                                "替换成功，OSS 源站校验一致（"
+                                "删除并上传成功，OSS 源站校验一致（"
                                         + humanSize(result.size) + "）。\n"
                                         + cdnMessage(result.publicStatus));
                         recheckButton.setVisibility(View.VISIBLE);
@@ -709,7 +896,12 @@ final class OssMaterialTool {
 
         private void updateReplaceEnabled() {
             replaceButton.setEnabled(selectedItem != null
-                    && selectedBytes != null && progress.getVisibility() != View.VISIBLE);
+                    && selectedBytes != null
+                    && selectedName != null
+                    && compatibleFileTypes(
+                    fileExtension(selectedItem.ossKey),
+                    fileExtension(selectedName))
+                    && progress.getVisibility() != View.VISIBLE);
         }
 
         private void setModeEnabled(boolean enabled) {
@@ -717,6 +909,17 @@ final class OssMaterialTool {
             for (int i = 0; i < modeGroup.getChildCount(); i++) {
                 modeGroup.getChildAt(i).setEnabled(enabled);
             }
+        }
+
+        private int selectedMode() {
+            int checked = modeGroup.getCheckedRadioButtonId();
+            if (checked == studentMode.getId()) {
+                return MODE_STUDENT;
+            }
+            if (checked == allMode.getId()) {
+                return MODE_ALL;
+            }
+            return MODE_MATERIAL;
         }
 
         private void setBusy(boolean busy, String message) {
@@ -899,7 +1102,7 @@ final class OssMaterialTool {
 
     private static FetchResult fetchItems(Activity activity, ClassLoader classLoader,
                                           Session session, String homeworkId,
-                                          boolean studentMode) throws Exception {
+                                          int mode) throws Exception {
         Map<String, String> homeworkFields = new LinkedHashMap<>();
         homeworkFields.put("homeworkId", homeworkId);
         homeworkFields.put("modifyNum", "0");
@@ -924,15 +1127,17 @@ final class OssMaterialTool {
             note = "答题卡详情接口不可用，已使用作业状态接口继续枚举。";
         }
 
-        List<ImageItem> found;
-        if (studentMode) {
-            found = collectStudentImages(homework, card);
-            if (found.isEmpty()) {
+        List<ImageItem> found = new ArrayList<>();
+        if (mode != MODE_MATERIAL) {
+            List<ImageItem> studentItems = collectStudentImages(homework, card);
+            found.addAll(studentItems);
+            if (studentItems.isEmpty()) {
                 found.addAll(fetchStudentFallback(classLoader, session,
                         homeworkId, homework));
             }
-        } else {
-            found = collectMaterialImages(homework, card);
+        }
+        if (mode != MODE_STUDENT) {
+            found.addAll(collectMaterialImages(homework, card));
             List<String> prefixes = materialPrefixes(homework, card);
             if (!prefixes.isEmpty()) {
                 try {
@@ -940,11 +1145,21 @@ final class OssMaterialTool {
                             activity, classLoader, prefixes));
                 } catch (Throwable t) {
                     note = appendNote(note,
-                            "材料目录扫描失败，仍可操作接口直接返回的图片：" + friendly(t));
+                            "材料目录扫描失败，仍可操作接口直接返回的文件：" + friendly(t));
                 }
             }
         }
-        return new FetchResult(deduplicate(found), note);
+        String homeworkName = findString(homework, "homeworkName", "");
+        if (homeworkName.isEmpty()) {
+            homeworkName = findString(homework, "title", "");
+        }
+        if (homeworkName.isEmpty()) {
+            homeworkName = findString(card, "homeworkName", "");
+        }
+        if (homeworkName.isEmpty()) {
+            homeworkName = "作业 " + homeworkId;
+        }
+        return new FetchResult(homeworkName, deduplicate(found), note);
     }
 
     private static List<ImageItem> collectStudentImages(
@@ -959,7 +1174,8 @@ final class OssMaterialTool {
             if (entry != null) {
                 addItem(items, "学生答案",
                         questionLabel("学生答案", entry, questions),
-                        first(entry, "pictureUrl", "url", "resourceUrl", "picUrl"));
+                        first(entry, "pictureUrl", "url", "resourceUrl", "picUrl",
+                                "audioUrl", "voiceUrl", "videoUrl", "fileUrl"));
             }
         }
 
@@ -969,9 +1185,25 @@ final class OssMaterialTool {
             if (entry != null) {
                 String bitId = first(entry, "bitmapId", "bitId");
                 addItem(items, "学生答案",
-                        questionLabel("学生图片", entry, questions)
+                        questionLabel("学生文件", entry, questions)
                                 + " · bit=" + (bitId.isEmpty() ? "-1" : bitId),
-                        first(entry, "pictureUrl", "url", "resourceUrl", "picUrl"));
+                        first(entry, "pictureUrl", "url", "resourceUrl", "picUrl",
+                                "audioUrl", "voiceUrl", "videoUrl", "fileUrl"));
+            }
+        }
+
+        for (String listKey : new String[]{
+                "studentAudioList", "studentVoiceList",
+                "studentVideoList", "studentFileList"}) {
+            JSONArray fileList = findArray(homework, listKey);
+            for (int i = 0; i < fileList.length(); i++) {
+                JSONObject entry = fileList.optJSONObject(i);
+                if (entry != null) {
+                    addItem(items, "学生答案",
+                            questionLabel("学生文件", entry, questions),
+                            first(entry, "url", "resourceUrl", "audioUrl",
+                                    "voiceUrl", "videoUrl", "fileUrl"));
+                }
             }
         }
 
@@ -980,16 +1212,23 @@ final class OssMaterialTool {
             if (resource == null) {
                 continue;
             }
-            JSONArray uploads = resource.optJSONArray("upLoadPicList");
-            if (uploads == null) {
-                continue;
-            }
-            for (int j = 0; j < uploads.length(); j++) {
-                JSONObject upload = uploads.optJSONObject(j);
-                if (upload != null) {
-                    addItem(items, "学生答案",
-                            "学生上传 · 题" + resource.optString("orderNum", "?"),
-                            first(upload, "url", "pictureUrl", "resourceUrl", "picUrl"));
+            for (String uploadKey : new String[]{
+                    "upLoadPicList", "upLoadAudioList", "upLoadVoiceList",
+                    "upLoadVideoList", "upLoadFileList"}) {
+                JSONArray uploads = resource.optJSONArray(uploadKey);
+                if (uploads == null) {
+                    continue;
+                }
+                for (int j = 0; j < uploads.length(); j++) {
+                    JSONObject upload = uploads.optJSONObject(j);
+                    if (upload != null) {
+                        addItem(items, "学生答案",
+                                "学生上传 · 题"
+                                        + resource.optString("orderNum", "?"),
+                                first(upload, "url", "pictureUrl",
+                                        "resourceUrl", "picUrl", "audioUrl",
+                                        "voiceUrl", "videoUrl", "fileUrl"));
+                    }
                 }
             }
         }
@@ -1000,8 +1239,9 @@ final class OssMaterialTool {
             if (entry != null) {
                 String order = first(entry, "orderNum", "serialNumber");
                 addItem(items, "学生答案",
-                        "答题卡图片 · 题" + (order.isEmpty() ? "?" : order),
-                        first(entry, "pictureUrl", "url"));
+                        "答题卡文件 · 题" + (order.isEmpty() ? "?" : order),
+                        first(entry, "pictureUrl", "url", "audioUrl",
+                                "voiceUrl", "videoUrl", "fileUrl"));
             }
         }
         return deduplicate(items);
@@ -1048,7 +1288,8 @@ final class OssMaterialTool {
                 }
                 for (JSONObject candidate : candidates) {
                     String raw = first(candidate, "pictureUrl", "url",
-                            "resourceUrl", "picUrl");
+                            "resourceUrl", "picUrl", "audioUrl", "voiceUrl",
+                            "videoUrl", "fileUrl");
                     boolean cameFromGenericAnswer = raw.isEmpty();
                     if (cameFromGenericAnswer) {
                         raw = candidate.optString("answer", "");
@@ -1078,7 +1319,8 @@ final class OssMaterialTool {
             if (entry != null) {
                 addItem(items, "作业材料",
                         "材料 · " + findString(entry, "title", "未命名"),
-                        entry.optString("resourceUrl", ""));
+                        first(entry, "resourceUrl", "sourceFileUrl",
+                                "fileUrl", "url"));
             }
         }
         JSONArray analyses = findArray(card, "analysistList");
@@ -1087,7 +1329,8 @@ final class OssMaterialTool {
             if (entry != null) {
                 addItem(items, "作业答案",
                         "答案/解析 · " + findString(entry, "title", "未命名"),
-                        entry.optString("resourceUrl", ""));
+                        first(entry, "resourceUrl", "sourceFileUrl",
+                                "fileUrl", "url"));
             }
         }
         JSONArray resources = findArray(homework, "resourceList");
@@ -1098,7 +1341,9 @@ final class OssMaterialTool {
                 addItem(items, "作业材料",
                         "题目资源 · 题" + entry.optString("orderNum", "?")
                                 + " · " + (title.isEmpty() ? "未命名" : title),
-                        first(entry, "resourceUrl", "url", "pictureUrl"));
+                        first(entry, "resourceUrl", "url", "pictureUrl",
+                                "sourceFileUrl", "fileUrl", "audioUrl",
+                                "videoUrl"));
             }
         }
         return deduplicate(items);
@@ -1107,13 +1352,16 @@ final class OssMaterialTool {
     private static List<String> materialPrefixes(
             JSONObject homework, JSONObject card) {
         List<String> rawUrls = new ArrayList<>();
-        collectField(rawUrls, findArray(card, "materialRelas"), "resourceUrl");
-        collectField(rawUrls, findArray(card, "analysistList"), "resourceUrl");
+        collectFirstField(rawUrls, findArray(card, "materialRelas"),
+                "resourceUrl", "sourceFileUrl", "fileUrl", "url");
+        collectFirstField(rawUrls, findArray(card, "analysistList"),
+                "resourceUrl", "sourceFileUrl", "fileUrl", "url");
         JSONArray resources = findArray(homework, "resourceList");
         for (int i = 0; i < resources.length(); i++) {
             JSONObject item = resources.optJSONObject(i);
             if (item != null) {
-                rawUrls.add(first(item, "resourceUrl", "url", "pictureUrl"));
+                rawUrls.add(first(item, "resourceUrl", "url", "pictureUrl",
+                        "sourceFileUrl", "fileUrl", "audioUrl", "videoUrl"));
             }
         }
         Map<String, Boolean> unique = new TreeMap<>();
@@ -1161,22 +1409,64 @@ final class OssMaterialTool {
             }
             for (Object summary : (List<?>) summaries) {
                 String key = valueOf(XposedHelpers.callMethod(summary, "getKey"));
-                if (!hasImageSuffix(key)) {
+                if (!isSupportedFile(key)) {
                     continue;
                 }
                 String name = key.substring(key.lastIndexOf('/') + 1);
-                result.add(new ImageItem("目录图片",
-                        "目录文件 · " + name, CDN_BASE + "/" + key, key));
+                result.add(new ImageItem("目录下其他文件",
+                        "目录扫描 · " + name, CDN_BASE + "/" + key, key));
             }
         }
         return deduplicate(result);
     }
 
     private static ReplacementResult replaceObject(
-            Activity activity, ClassLoader classLoader, ImageItem item,
-            byte[] bytes, String mime) throws Exception {
-        JSONObject sts = fetchSts(classLoader, "学生答案".equals(item.category));
+            Activity activity, ClassLoader classLoader, String homeworkId,
+            ImageItem requestedItem, byte[] bytes,
+            String fileName, String declaredMime) throws Exception {
+        Session session = currentSession(classLoader);
+        String requestedKey = safeObjectKey(requestedItem.ossKey);
+        int mode = "学生答案".equals(requestedItem.category)
+                ? MODE_STUDENT : MODE_MATERIAL;
+        FetchResult current = fetchItems(
+                activity, classLoader, session, homeworkId, mode);
+        ImageItem item = null;
+        for (ImageItem candidate : current.items) {
+            if (candidate.ossKey.equals(requestedKey)) {
+                item = candidate;
+                break;
+            }
+        }
+        if (item == null) {
+            throw new IllegalStateException(
+                    "目标文件已不在当前作业中，请刷新后重试");
+        }
+        String mime = validateUpload(
+                bytes, fileName, item.ossKey, declaredMime);
+
+        JSONObject sts = fetchSts(classLoader, mode == MODE_STUDENT);
         Object client = makeOssClient(activity, classLoader, sts);
+
+        Class<?> deleteClass = XposedHelpers.findClass(
+                "com.alibaba.sdk.android.oss.model.DeleteObjectRequest",
+                classLoader);
+        Object deleteRequest = XposedHelpers.newInstance(
+                deleteClass, OSS_BUCKET, item.ossKey);
+        Object deleteResult;
+        try {
+            deleteResult = XposedHelpers.callMethod(
+                    client, "deleteObject", deleteRequest);
+        } catch (Throwable t) {
+            throw new IllegalStateException(
+                    "删除原对象失败，未执行上传：" + friendly(t));
+        }
+        int deleteStatus = ((Number) XposedHelpers.callMethod(
+                deleteResult, "getStatusCode")).intValue();
+        if (deleteStatus != 200 && deleteStatus != 204) {
+            throw new IllegalStateException(
+                    "OSS 删除返回 HTTP " + deleteStatus
+                            + requestIdSuffix(deleteResult));
+        }
 
         Class<?> metadataClass = XposedHelpers.findClass(
                 "com.alibaba.sdk.android.oss.model.ObjectMetadata", classLoader);
@@ -1192,12 +1482,19 @@ final class OssMaterialTool {
         Object putRequest = XposedHelpers.newInstance(
                 putClass, OSS_BUCKET, item.ossKey, bytes, metadata);
 
-        // OSS PUT 本身会覆盖同 Key 对象；不先 DELETE，避免上传失败造成原对象丢失。
-        Object putResult = XposedHelpers.callMethod(client, "putObject", putRequest);
+        Object putResult;
+        try {
+            putResult = XposedHelpers.callMethod(client, "putObject", putRequest);
+        } catch (Throwable t) {
+            throw new IllegalStateException(
+                    "原对象已删除，但上传失败：" + friendly(t));
+        }
         int putStatus = ((Number) XposedHelpers.callMethod(
                 putResult, "getStatusCode")).intValue();
         if (putStatus != 200) {
-            throw new IllegalStateException("OSS 上传返回 HTTP " + putStatus);
+            throw new IllegalStateException(
+                    "原对象已删除，但上传返回 HTTP " + putStatus
+                            + requestIdSuffix(putResult));
         }
 
         String localDigest = sha256(bytes);
@@ -1214,7 +1511,7 @@ final class OssMaterialTool {
         try (InputStream in = (InputStream) XposedHelpers.callMethod(
                 getResult, "getObjectContent")) {
             remoteBytes = readFully(in,
-                    Math.max(MAX_LOCAL_IMAGE_BYTES, bytes.length + 1024 * 1024));
+                    Math.max(MAX_LOCAL_FILE_BYTES, bytes.length + 1024 * 1024));
         }
         if (!localDigest.equals(sha256(remoteBytes))) {
             throw new IllegalStateException("上传后 SHA-256 校验不一致");
@@ -1227,6 +1524,16 @@ final class OssMaterialTool {
             publicStatus = PublicStatus.unavailable(friendly(t));
         }
         return new ReplacementResult(remoteBytes.length, localDigest, publicStatus);
+    }
+
+    private static String requestIdSuffix(Object result) {
+        try {
+            String requestId = valueOf(
+                    XposedHelpers.callMethod(result, "getRequestId"));
+            return requestId.isEmpty() ? "" : "，requestId=" + requestId;
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     private static JSONObject fetchSts(
@@ -1373,6 +1680,7 @@ final class OssMaterialTool {
         connection.setConnectTimeout(20000);
         connection.setReadTimeout(30000);
         connection.setRequestProperty("User-Agent", "okhttp/3.12.1");
+        connection.setRequestProperty("Cache-Control", "no-cache");
         try {
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
@@ -1395,7 +1703,9 @@ final class OssMaterialTool {
 
     private static PublicStatus checkPublic(
             ImageItem item, String expectedDigest) throws Exception {
-        HttpBytes response = httpGet(item.url, MAX_LOCAL_IMAGE_BYTES);
+        HttpBytes response = httpGet(
+                cacheBustedUrl(item.url, "oss_toolkit"),
+                MAX_LOCAL_FILE_BYTES);
         return new PublicStatus(
                 expectedDigest.equals(sha256(response.bytes)),
                 response.bytes.length,
@@ -1416,12 +1726,16 @@ final class OssMaterialTool {
         if (status.cacheTime != null) {
             details += "，CacheTime=" + status.cacheTime;
         }
+        if (!status.matches && status.age != null && status.cacheTime != null) {
+            details += "，预计剩余 "
+                    + Math.max(status.cacheTime - status.age, 0) + " 秒";
+        }
         if (!status.cacheResult.isEmpty()) {
             details += "，" + status.cacheResult;
         }
         return status.matches
-                ? "公开 CDN 已返回新图片（" + details + "）"
-                : "OSS 已替换，但公开 CDN 仍返回旧缓存（" + details
+                ? "公开 CDN 已返回新文件（" + details + "）"
+                : "OSS 新对象已上传，但公开 CDN 仍返回旧缓存（" + details
                 + "）。可稍后点击“重新检查公开 CDN”。";
     }
 
@@ -1479,7 +1793,7 @@ final class OssMaterialTool {
     private static void addItem(
             List<ImageItem> target, String category, String label, String rawUrl) {
         String url = normalizeUrl(rawUrl);
-        if (url.isEmpty() || !looksLikeImage(url)) {
+        if (url.isEmpty() || !isSupportedFile(url)) {
             return;
         }
         String key = ossKey(url);
@@ -1500,12 +1814,18 @@ final class OssMaterialTool {
             return "";
         }
         if (lower.startsWith("http://") || lower.startsWith("https://")) {
-            return value;
+            return lower.startsWith("http://")
+                    ? "https://" + value.substring(7) : value;
         }
         if (value.startsWith("//")) {
             return "https:" + value;
         }
         return value.startsWith("/") ? CDN_BASE + value : CDN_BASE + "/" + value;
+    }
+
+    private static String cacheBustedUrl(String url, String parameter) {
+        String separator = url.contains("?") ? "&" : "?";
+        return url + separator + parameter + "=" + System.currentTimeMillis();
     }
 
     private static String ossKey(String url) {
@@ -1529,19 +1849,240 @@ final class OssMaterialTool {
         return value.substring(index);
     }
 
-    private static boolean looksLikeImage(String url) {
-        String path = valueOf(Uri.parse(url).getPath()).toLowerCase(Locale.ROOT);
-        int slash = path.lastIndexOf('/');
-        int dot = path.lastIndexOf('.');
-        return dot <= slash || hasImageSuffix(path);
+    private static String safeObjectKey(String value) {
+        String key = trimLeadingSlash(value == null ? "" : value);
+        if (key.isEmpty() || key.contains("..")
+                || key.contains("\\") || key.startsWith(".")) {
+            throw new IllegalArgumentException("OSS 对象路径无效");
+        }
+        return key;
     }
 
-    private static boolean hasImageSuffix(String value) {
-        String lower = value.toLowerCase(Locale.ROOT);
-        return lower.endsWith(".jpg") || lower.endsWith(".jpeg")
-                || lower.endsWith(".png") || lower.endsWith(".gif")
-                || lower.endsWith(".bmp") || lower.endsWith(".webp")
-                || lower.endsWith(".tif") || lower.endsWith(".tiff");
+    private static String fileExtension(String value) {
+        String clean = value == null ? "" : value;
+        int query = clean.indexOf('?');
+        if (query >= 0) {
+            clean = clean.substring(0, query);
+        }
+        int slash = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'));
+        int dot = clean.lastIndexOf('.');
+        return dot <= slash ? ""
+                : clean.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean isImageExtension(String extension) {
+        return extension != null && extension.matches(
+                "(?i)jpg|jpeg|png|gif|bmp|webp|tif|tiff");
+    }
+
+    private static boolean isSupportedExtension(String extension) {
+        return extension != null && extension.matches(
+                "(?i)jpg|jpeg|png|gif|bmp|webp|tif|tiff|pdf|"
+                        + "doc|docx|rtf|xls|xlsx|csv|ppt|pptx|"
+                        + "mp3|m4a|aac|wav|ogg|flac|"
+                        + "mp4|m4v|mov|webm|mkv|"
+                        + "txt|md|json|xml|html|htm|zip|rar|7z");
+    }
+
+    private static boolean isSupportedFile(String value) {
+        String extension = fileExtension(value);
+        return extension.isEmpty() || isSupportedExtension(extension);
+    }
+
+    private static String fileFamily(String extension) {
+        if (isImageExtension(extension)) {
+            return "image";
+        }
+        if ("pdf".equals(extension)) {
+            return "pdf";
+        }
+        if (extension.matches("doc|docx|rtf")) {
+            return "document";
+        }
+        if (extension.matches("xls|xlsx|csv")) {
+            return "spreadsheet";
+        }
+        if (extension.matches("ppt|pptx")) {
+            return "presentation";
+        }
+        if (extension.matches("mp3|m4a|aac|wav|ogg|flac")) {
+            return "audio";
+        }
+        if (extension.matches("mp4|m4v|mov|webm|mkv")) {
+            return "video";
+        }
+        if (extension.matches("txt|md|json|xml|html|htm")) {
+            return "text";
+        }
+        if (extension.matches("zip|rar|7z")) {
+            return "archive";
+        }
+        return "file";
+    }
+
+    private static String fileFamilyLabel(String extension) {
+        switch (fileFamily(extension)) {
+            case "image":
+                return "图片";
+            case "pdf":
+                return "PDF 文档";
+            case "document":
+                return "文档";
+            case "spreadsheet":
+                return "表格";
+            case "presentation":
+                return "演示文稿";
+            case "audio":
+                return "音频";
+            case "video":
+                return "视频";
+            case "text":
+                return "文本";
+            case "archive":
+                return "压缩包";
+            default:
+                return "文件";
+        }
+    }
+
+    private static boolean compatibleFileTypes(
+            String targetExtension, String uploadExtension) {
+        if (targetExtension == null || targetExtension.isEmpty()) {
+            return true;
+        }
+        if (targetExtension.equals(uploadExtension)) {
+            return true;
+        }
+        String targetFamily = fileFamily(targetExtension);
+        return targetFamily.equals(fileFamily(uploadExtension))
+                && targetFamily.matches("image|audio|video");
+    }
+
+    private static String contentTypeForExtension(String extension) {
+        switch (extension) {
+            case "jpg":
+            case "jpeg":
+                return "image/jpeg";
+            case "png":
+                return "image/png";
+            case "gif":
+                return "image/gif";
+            case "bmp":
+                return "image/bmp";
+            case "webp":
+                return "image/webp";
+            case "tif":
+            case "tiff":
+                return "image/tiff";
+            case "pdf":
+                return "application/pdf";
+            case "doc":
+                return "application/msword";
+            case "docx":
+                return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            case "rtf":
+                return "application/rtf";
+            case "xls":
+                return "application/vnd.ms-excel";
+            case "xlsx":
+                return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            case "csv":
+                return "text/csv";
+            case "ppt":
+                return "application/vnd.ms-powerpoint";
+            case "pptx":
+                return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+            case "mp3":
+                return "audio/mpeg";
+            case "m4a":
+                return "audio/mp4";
+            case "aac":
+                return "audio/aac";
+            case "wav":
+                return "audio/wav";
+            case "ogg":
+                return "audio/ogg";
+            case "flac":
+                return "audio/flac";
+            case "mp4":
+                return "video/mp4";
+            case "m4v":
+                return "video/x-m4v";
+            case "mov":
+                return "video/quicktime";
+            case "webm":
+                return "video/webm";
+            case "mkv":
+                return "video/x-matroska";
+            case "txt":
+                return "text/plain";
+            case "md":
+                return "text/markdown";
+            case "json":
+                return "application/json";
+            case "xml":
+                return "application/xml";
+            case "html":
+            case "htm":
+                return "text/html";
+            case "zip":
+                return "application/zip";
+            case "rar":
+                return "application/vnd.rar";
+            case "7z":
+                return "application/x-7z-compressed";
+            default:
+                return "application/octet-stream";
+        }
+    }
+
+    private static String validateUpload(
+            byte[] bytes, String fileName, String targetKey,
+            String declaredMime) {
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException("替换文件为空");
+        }
+        if (bytes.length > MAX_LOCAL_FILE_BYTES) {
+            throw new IllegalArgumentException("替换文件不能超过 50 MB");
+        }
+        String extension = fileExtension(fileName);
+        if (extension.isEmpty() || !isSupportedExtension(extension)) {
+            throw new IllegalArgumentException("不支持该文件格式");
+        }
+        String targetExtension = fileExtension(targetKey);
+        if (!compatibleFileTypes(targetExtension, extension)) {
+            throw new IllegalArgumentException(
+                    "替换文件格式不匹配：目标为 ."
+                            + targetExtension + "，所选文件为 ." + extension);
+        }
+        if (isImageExtension(extension)) {
+            return sniffImageMime(bytes);
+        }
+        if ("pdf".equals(extension)) {
+            String header = bytes.length >= 5
+                    ? new String(bytes, 0, 5, StandardCharsets.US_ASCII) : "";
+            if (!"%PDF-".equals(header)) {
+                throw new IllegalArgumentException("所选文件不是有效的 PDF");
+            }
+        }
+        String supplied = declaredMime == null ? "" : declaredMime.trim();
+        return supplied.isEmpty()
+                || "application/octet-stream".equalsIgnoreCase(supplied)
+                ? contentTypeForExtension(extension) : supplied;
+    }
+
+    private static String[] supportedMimeTypes() {
+        return new String[]{
+                "image/*", "application/pdf", "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/rtf", "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "text/csv", "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "audio/*", "video/*", "text/*", "application/json",
+                "application/xml", "application/zip", "application/vnd.rar",
+                "application/x-7z-compressed"
+        };
     }
 
     private static boolean looksLikeStoredPath(String value) {
@@ -1551,7 +2092,7 @@ final class OssMaterialTool {
         String trimmed = value.trim();
         return trimmed.contains("/") || trimmed.startsWith("//")
                 || trimmed.startsWith("http://") || trimmed.startsWith("https://")
-                || hasImageSuffix(trimmed);
+                || isSupportedExtension(fileExtension(trimmed));
     }
 
     private static List<ImageItem> deduplicate(List<ImageItem> items) {
@@ -1565,31 +2106,50 @@ final class OssMaterialTool {
     }
 
     private static JSONArray findArray(JSONObject source, String key) {
-        JSONArray direct = source.optJSONArray(key);
-        if (direct != null) {
-            return direct;
-        }
-        for (String wrapper : new String[]{"data", "InfoMap", "result"}) {
-            JSONObject nested = source.optJSONObject(wrapper);
-            if (nested != null) {
-                JSONArray value = nested.optJSONArray(key);
+        JSONArray result = new JSONArray();
+        for (JSONObject candidate : objectSources(source)) {
+            JSONArray array = candidate.optJSONArray(key);
+            if (array == null) {
+                continue;
+            }
+            for (int i = 0; i < array.length(); i++) {
+                Object value = array.opt(i);
                 if (value != null) {
-                    return value;
+                    result.put(value);
                 }
             }
         }
-        return new JSONArray();
+        return result;
+    }
+
+    private static List<JSONObject> objectSources(JSONObject source) {
+        List<JSONObject> result = new ArrayList<>();
+        List<JSONObject> queue = new ArrayList<>();
+        if (source != null) {
+            queue.add(source);
+        }
+        for (int index = 0; index < queue.size(); index++) {
+            JSONObject current = queue.get(index);
+            if (result.contains(current)) {
+                continue;
+            }
+            result.add(current);
+            for (String wrapper : new String[]{
+                    "data", "result", "object", "InfoMap", "infoMap"}) {
+                JSONObject nested = current.optJSONObject(wrapper);
+                if (nested != null && !result.contains(nested)) {
+                    queue.add(nested);
+                }
+            }
+        }
+        return result;
     }
 
     private static JSONObject findObjectWithFields(
             JSONObject source, String... fields) {
-        if (hasFields(source, fields)) {
-            return source;
-        }
-        for (String wrapper : new String[]{"data", "InfoMap", "result"}) {
-            JSONObject nested = source.optJSONObject(wrapper);
-            if (nested != null && hasFields(nested, fields)) {
-                return nested;
+        for (JSONObject candidate : objectSources(source)) {
+            if (hasFields(candidate, fields)) {
+                return candidate;
             }
         }
         return null;
@@ -1619,28 +2179,21 @@ final class OssMaterialTool {
 
     private static String findString(
             JSONObject source, String key, String fallback) {
-        String direct = source.optString(key, "");
-        if (!direct.isEmpty()) {
-            return direct;
-        }
-        for (String wrapper : new String[]{"data", "InfoMap", "result"}) {
-            JSONObject nested = source.optJSONObject(wrapper);
-            if (nested != null) {
-                String value = nested.optString(key, "");
-                if (!value.isEmpty()) {
-                    return value;
-                }
+        for (JSONObject candidate : objectSources(source)) {
+            String value = candidate.optString(key, "");
+            if (!value.isEmpty()) {
+                return value;
             }
         }
         return fallback;
     }
 
-    private static void collectField(
-            List<String> target, JSONArray array, String key) {
+    private static void collectFirstField(
+            List<String> target, JSONArray array, String... keys) {
         for (int i = 0; i < array.length(); i++) {
             JSONObject item = array.optJSONObject(i);
             if (item != null) {
-                target.add(item.optString(key, ""));
+                target.add(first(item, keys));
             }
         }
     }
@@ -1699,7 +2252,7 @@ final class OssMaterialTool {
         return segment == null ? "selected_image" : segment;
     }
 
-    private static String sniffMime(byte[] bytes) {
+    private static String sniffImageMime(byte[] bytes) {
         if (bytes.length >= 8
                 && bytes[0] == (byte) 0x89 && bytes[1] == 'P'
                 && bytes[2] == 'N' && bytes[3] == 'G') {
@@ -1728,11 +2281,7 @@ final class OssMaterialTool {
                 && bytes[2] == 0 && bytes[3] == 42))) {
             return "image/tiff";
         }
-        return "application/octet-stream";
-    }
-
-    private static boolean hasKnownImageSignature(byte[] bytes) {
-        return !"application/octet-stream".equals(sniffMime(bytes));
+        throw new IllegalArgumentException("所选文件不是受支持的图片");
     }
 
     private static String md5(String value) throws Exception {
@@ -1824,20 +2373,43 @@ final class OssMaterialTool {
         final String label;
         final String url;
         final String ossKey;
+        final String extension;
+        final String family;
+        final String contentType;
 
         ImageItem(String category, String label, String url, String ossKey) {
             this.category = category;
             this.label = label;
             this.url = url;
             this.ossKey = ossKey;
+            this.extension = fileExtension(ossKey);
+            this.family = fileFamily(extension);
+            this.contentType = contentTypeForExtension(extension);
+        }
+
+        boolean isImage() {
+            return "image".equals(family);
+        }
+
+        String familyLabel() {
+            return fileFamilyLabel(extension);
+        }
+
+        String fileName() {
+            int slash = ossKey.lastIndexOf('/');
+            String name = slash >= 0 ? ossKey.substring(slash + 1) : ossKey;
+            return name.isEmpty() ? "OSS 文件" : name;
         }
     }
 
     private static final class FetchResult {
+        final String homeworkName;
         final List<ImageItem> items;
         final String note;
 
-        FetchResult(List<ImageItem> items, String note) {
+        FetchResult(
+                String homeworkName, List<ImageItem> items, String note) {
+            this.homeworkName = homeworkName;
             this.items = items;
             this.note = note;
         }

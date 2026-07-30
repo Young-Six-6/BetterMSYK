@@ -1,7 +1,6 @@
 package com.youngsix6.bettermsyk.hook;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.View;
@@ -15,13 +14,11 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 调试模式下允许未提交作业按已开放答案的流程查看答案。
+ * 对应模块设置开启时，允许未提交作业查看答案
  */
 public final class AnswerViewDebugHook {
 
     private static final String TAG = "[BetterMSYK]";
-    private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String ORDINARY_PRESENTER =
             "com.zdsoft.newsquirrel.android.activity.student.homework.detail.StudentHomeworkDetailPresenter";
     private static final String DTK_ACTIVITY =
@@ -80,7 +77,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Context context = getContext(param.thisObject);
-                            if (context != null && isDebugMode(context)) {
+                            if (context != null && isAnswerViewEnabled(context)) {
                                 param.setResult(1);
                             }
                         }
@@ -103,7 +100,7 @@ public final class AnswerViewDebugHook {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) {
                                 Context context = (Context) param.thisObject;
-                                if (isDebugMode(context)) {
+                                if (isAnswerViewEnabled(context)) {
                                     postInstallDtkMaterialAnswerEntry(param.thisObject);
                                 }
                             }
@@ -121,7 +118,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
-                            if (!isDebugMode(context)) {
+                            if (!isAnswerViewEnabled(context)) {
                                 return;
                             }
                             forceDtkInfoShowAnswer(param.args[0]);
@@ -131,7 +128,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
-                            if (isDebugMode(context)) {
+                            if (isAnswerViewEnabled(context)) {
                                 forceActivityShowAnswer(param.thisObject);
                                 postInstallDtkMaterialAnswerEntry(param.thisObject);
                             }
@@ -145,7 +142,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
-                            if (isDebugMode(context)) {
+                            if (isAnswerViewEnabled(context)) {
                                 postInstallDtkMaterialAnswerEntry(param.thisObject);
                             }
                         }
@@ -158,7 +155,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
-                            if (isDebugMode(context)) {
+                            if (isAnswerViewEnabled(context)) {
                                 forceActivityShowAnswer(param.thisObject);
                             }
                         }
@@ -171,7 +168,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Context context = (Context) param.thisObject;
-                            if (isDebugMode(context)) {
+                            if (isAnswerViewEnabled(context)) {
                                 param.setResult(1);
                             }
                         }
@@ -201,7 +198,7 @@ public final class AnswerViewDebugHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Context context = android.app.AndroidAppHelper.currentApplication();
-                            if (context != null && isDebugMode(context)) {
+                            if (context != null && isAnswerViewEnabled(context)) {
                                 param.setResult(1);
                             }
                         }
@@ -217,7 +214,7 @@ public final class AnswerViewDebugHook {
     private static void forcePresenterShowAnswer(Object presenter) {
         try {
             Context context = getContext(presenter);
-            if (context == null || !isDebugMode(context)) {
+            if (context == null || !isAnswerViewEnabled(context)) {
                 return;
             }
             XposedHelpers.setIntField(presenter, "showAnswer", 1);
@@ -459,9 +456,9 @@ public final class AnswerViewDebugHook {
         }
     }
 
-    private static boolean isDebugMode(Context context) {
-        SharedPreferences sp = context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        return sp.getBoolean(KEY_DEBUG_MODE, false);
+    private static boolean isAnswerViewEnabled(Context context) {
+        return ModuleSettingsHook
+                .isUnsubmittedAnswerViewEnabled(context);
     }
 
     private static void toast(Context context, String message) {

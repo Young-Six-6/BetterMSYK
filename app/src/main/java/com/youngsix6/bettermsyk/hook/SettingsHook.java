@@ -16,6 +16,10 @@ import android.widget.ImageView;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
+
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -27,18 +31,18 @@ public final class SettingsHook {
     private static final String MODULE_PACKAGE = "com.youngsix6.bettermsyk";
     private static final String HIDDEN_TRIGGER_ICON = "my_img_hidden_trigger";
     private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String KEY_VOLUME_TRIGGER = "isVolumeTriggerEnabled";
+    private static final String HIDDEN_TOOLS_INJECTED_TAG =
+            "bettermsyk_hidden_tools_injected";
     private static final String HIDDEN_PAGE_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.teacher.AboutMsykActivity";
     static final String EXTRA_OSS_TOOLKIT =
             "com.youngsix6.bettermsyk.extra.OSS_TOOLKIT";
     static final String EXTRA_MODULE_SETTINGS =
             "com.youngsix6.bettermsyk.extra.MODULE_SETTINGS";
-    private static final int DEBUG_ENTRY_TAP_COUNT = 7;
+    private static final int HIDDEN_ENTRY_TAP_COUNT = 7;
 
-    // 缓存动态解析后的资源 ID（类级别，跨 Activity 实例共享）
-    private static volatile boolean sIdsResolved = false;
+    private static volatile boolean sIdsResolved;
     private static int sIdStuHeadIcon;
     private static int sIdViewProtectEyeMode;
     private static int sIdViewAboutUs;
@@ -61,354 +65,282 @@ public final class SettingsHook {
     private static int sDimY48;
     private static int sDimY120;
 
-    public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
-        XposedBridge.log(TAG + " SettingsHook.init() — registering onCreate hook...");
+    private static final Map<Activity,
+            SharedPreferences.OnSharedPreferenceChangeListener>
+            VOLUME_LISTENERS = Collections.synchronizedMap(
+            new WeakHashMap<>());
 
+    private SettingsHook() {
+    }
+
+    public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
+        XposedBridge.log(TAG
+                + " SettingsHook.init() — registering hidden tools entry...");
         try {
             Class<?> activityClass = XposedHelpers.findClass(
-                    "com.zdsoft.newsquirrel.android.activity.student.PersonCenterStuActivity",
-                    lpparam.classLoader
-            );
-            XposedBridge.log(TAG + " PersonCenterStuActivity class found.");
-
+                    "com.zdsoft.newsquirrel.android.activity.student"
+                            + ".PersonCenterStuActivity",
+                    lpparam.classLoader);
             XposedHelpers.findAndHookMethod(
                     activityClass,
                     "onCreate",
                     android.os.Bundle.class,
                     new XC_MethodHook() {
                         @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
+                        protected void afterHookedMethod(
+                                MethodHookParam param) {
                             Activity activity = (Activity) param.thisObject;
                             try {
-                                installHiddenDebugEntry(activity);
-                            } catch (Exception e) {
-                                XposedBridge.log(TAG + " installHiddenDebugEntry ERROR: "
-                                        + e.getClass().getSimpleName() + ": " + e.getMessage());
-                                e.printStackTrace();
+                                installHiddenToolsEntry(activity);
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG
+                                        + " install hidden tools entry failed: "
+                                        + t.getClass().getSimpleName() + ": "
+                                        + t.getMessage());
                             }
                         }
-                    }
-            );
-            XposedBridge.log(TAG + " Hook registered on PersonCenterStuActivity.onCreate");
-        } catch (Exception e) {
-            XposedBridge.log(TAG + " FAILED to hook PersonCenterStuActivity: "
-                    + e.getClass().getSimpleName() + ": " + e.getMessage());
-            e.printStackTrace();
+                    });
+            XposedHelpers.findAndHookMethod(
+                    activityClass,
+                    "onDestroy",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(
+                                MethodHookParam param) {
+                            unregisterVolumeListener(
+                                    (Activity) param.thisObject);
+                        }
+                    });
+            XposedBridge.log(TAG
+                    + " PersonCenterStuActivity hidden tools hooks registered.");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " SettingsHook init failed: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
 
     /**
-     * 调试开关不随设置页直接显示；本次页面内连续点击头像 7 次后才注入。
-     * 计数只保存在当前 Activity 的监听器中，退出设置页后自动清零。
+     * 默认在本次页面内连续点击头像 7 次后显示音量触发、OSS ToolKit
+     * 与模块设置入口；启用“隐藏注入常显”后进入页面即直接显示。
+     * 头像点击计数在退出页面后自动清零。
      */
-    private static void installHiddenDebugEntry(Activity activity) {
-        String pkg = activity.getPackageName();
-        Resources res = activity.getResources();
-        ensureIdsResolved(res, pkg);
-
+    private static void installHiddenToolsEntry(Activity activity) {
+        Resources resources = activity.getResources();
+        ensureIdsResolved(resources, activity.getPackageName());
+        if (ModuleSettingsHook.isHiddenInjectionAlwaysVisible(activity)) {
+            injectHiddenTools(activity);
+            XposedBridge.log(TAG
+                    + " hidden tools revealed by always-visible setting");
+            return;
+        }
         View avatar = activity.findViewById(sIdStuHeadIcon);
         if (avatar == null) {
-            XposedBridge.log(TAG + " iv_stu_head_icon NOT FOUND (id=" + sIdStuHeadIcon + ")");
+            XposedBridge.log(TAG + " student avatar not found");
             return;
         }
 
         final int[] tapCount = {0};
         final boolean[] revealed = {false};
-        avatar.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (revealed[0]) {
-                    return;
-                }
-
-                tapCount[0]++;
-                if (tapCount[0] < DEBUG_ENTRY_TAP_COUNT) {
-                    return;
-                }
-
-                revealed[0] = true;
-                injectDebugModeSwitch(activity);
-                XposedBridge.log(TAG + " debug mode switch revealed by avatar taps");
+        avatar.setOnClickListener(view -> {
+            if (revealed[0]) {
+                return;
             }
+            tapCount[0]++;
+            if (tapCount[0] < HIDDEN_ENTRY_TAP_COUNT) {
+                return;
+            }
+            revealed[0] = true;
+            injectHiddenTools(activity);
+            XposedBridge.log(TAG
+                    + " hidden tools revealed by avatar taps");
         });
-
-        XposedBridge.log(TAG + " hidden debug entry installed");
+        XposedBridge.log(TAG + " hidden tools trigger installed");
     }
 
-    private static void injectDebugModeSwitch(Activity activity) {
-        String pkg = activity.getPackageName();
-        Resources res = activity.getResources();
-
-        ensureIdsResolved(res, pkg);
-
-        // 1. 找 View
-        View protectEyeView = activity.findViewById(sIdViewProtectEyeMode);
-        if (protectEyeView == null) {
-            XposedBridge.log(TAG + " view_protect_eye_mode NOT FOUND (id=" + sIdViewProtectEyeMode + ")");
+    private static void injectHiddenTools(Activity activity) {
+        Resources resources = activity.getResources();
+        ensureIdsResolved(resources, activity.getPackageName());
+        View content = activity.findViewById(android.R.id.content);
+        if (content != null
+                && content.findViewWithTag(
+                HIDDEN_TOOLS_INJECTED_TAG) != null) {
             return;
         }
-        XposedBridge.log(TAG + " view_protect_eye_mode found");
 
+        View protectEyeView =
+                activity.findViewById(sIdViewProtectEyeMode);
+        if (protectEyeView == null
+                || !(protectEyeView.getParent() instanceof ViewGroup)) {
+            XposedBridge.log(TAG + " protect-eye row unavailable");
+            return;
+        }
         ViewGroup parent = (ViewGroup) protectEyeView.getParent();
-        if (parent == null) {
-            XposedBridge.log(TAG + " parent is null!");
-            return;
-        }
-        // 记录注入前的子 View 数量。原布局中不只有点击区域，分隔线、文字和箭头
-        // 也分别通过 BELOW=view_protect_eye_mode 定位；它们必须作为一个整体下移。
         int originalChildCount = parent.getChildCount();
 
-        // 2. 尺寸
-        int pxY120 = res.getDimensionPixelSize(sDimY120);
-        int pxY1   = res.getDimensionPixelSize(sDimY1);
-        int pxX54  = res.getDimensionPixelSize(sDimX54);
-        int pxX18  = res.getDimensionPixelSize(sDimX18);
-        float textSize = res.getDimensionPixelSize(sDimX30);
-        int pxX96  = res.getDimensionPixelSize(sDimX96);
-        int pxY48  = res.getDimensionPixelSize(sDimY48);
-        int pxY3   = res.getDimensionPixelSize(sDimY3);
-        int pxY42  = res.getDimensionPixelSize(sDimY42);
-        int pxY36  = res.getDimensionPixelSize(sDimY36);
+        int pxY120 = resources.getDimensionPixelSize(sDimY120);
+        int pxY1 = resources.getDimensionPixelSize(sDimY1);
+        int pxX54 = resources.getDimensionPixelSize(sDimX54);
+        int pxX18 = resources.getDimensionPixelSize(sDimX18);
+        float textSize = resources.getDimensionPixelSize(sDimX30);
+        int pxX96 = resources.getDimensionPixelSize(sDimX96);
+        int pxY48 = resources.getDimensionPixelSize(sDimY48);
+        int pxY3 = resources.getDimensionPixelSize(sDimY3);
+        int pxY42 = resources.getDimensionPixelSize(sDimY42);
+        int pxY36 = resources.getDimensionPixelSize(sDimY36);
+        int lineColor = safeColor(
+                resources, sColorLineE8, Color.parseColor("#E8E8E8"));
+        int textColor = safeColor(
+                resources, sColorFont333, Color.parseColor("#333333"));
 
-        // 3. 颜色
-        int colorLine = safeColor(res, sColorLineE8, Color.parseColor("#E8E8E8"));
-        int colorFont333 = safeColor(res, sColorFont333, Color.parseColor("#333333"));
-
-        // 4. divider
-        final int dividerId = View.generateViewId();
+        int dividerId = View.generateViewId();
         View divider = new View(activity);
         divider.setId(dividerId);
-        divider.setBackgroundColor(colorLine);
-        RelativeLayout.LayoutParams dividerLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
-        dividerLp.addRule(RelativeLayout.BELOW, sIdViewProtectEyeMode);
+        divider.setBackgroundColor(lineColor);
+        RelativeLayout.LayoutParams dividerLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
+        dividerLp.addRule(
+                RelativeLayout.BELOW, sIdViewProtectEyeMode);
         dividerLp.setMarginStart(pxX54);
         divider.setLayoutParams(dividerLp);
 
-        // 5. 点击区域
-        final int debugClickAreaId = View.generateViewId();
-        View debugClickArea = new View(activity);
-        debugClickArea.setId(debugClickAreaId);
-        try {
-            debugClickArea.setBackground(res.getDrawable(sDrawTransOrFafafa, null));
-        } catch (Exception ignored) {}
-        RelativeLayout.LayoutParams areaLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
-        areaLp.addRule(RelativeLayout.BELOW, dividerId);
-        debugClickArea.setLayoutParams(areaLp);
-
-        // 6. 标签
-        TextView debugLabel = new TextView(activity);
-        debugLabel.setId(View.generateViewId());
-        debugLabel.setText("调试模式");
-        debugLabel.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
-        debugLabel.setTextColor(colorFont333);
-        debugLabel.setGravity(Gravity.CENTER_VERTICAL);
-        try {
-            Drawable triggerIcon = loadHiddenTriggerIcon(activity);
-            debugLabel.setCompoundDrawablesWithIntrinsicBounds(
-                    triggerIcon, null, null, null);
-        } catch (Exception ignored) {}
-        debugLabel.setCompoundDrawablePadding(pxX18);
-        RelativeLayout.LayoutParams labelLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
-        labelLp.addRule(RelativeLayout.BELOW, dividerId);
-        debugLabel.setLayoutParams(labelLp);
-
-        // 7. 开关 FrameLayout
-        final int toggleFrameId = View.generateViewId();
-        FrameLayout toggleFrame = new FrameLayout(activity);
-        toggleFrame.setId(toggleFrameId);
-        try {
-            toggleFrame.setBackground(res.getDrawable(sDrawD8d8d8Green24, null));
-        } catch (Exception e) {
-            GradientDrawable gd = new GradientDrawable();
-            gd.setColor(Color.parseColor("#D8D8D8"));
-            gd.setCornerRadius(24f);
-            toggleFrame.setBackground(gd);
-        }
-        RelativeLayout.LayoutParams toggleLp = new RelativeLayout.LayoutParams(pxX96, pxY48);
-        toggleLp.addRule(RelativeLayout.ALIGN_PARENT_END);
-        toggleLp.addRule(RelativeLayout.BELOW, dividerId);
-        toggleLp.topMargin = pxY36;
-        toggleFrame.setLayoutParams(toggleLp);
-        toggleFrame.setPadding(pxY3, pxY3, pxY3, pxY3);
-
-        // 8. 圆球
-        ImageView ivOff = new ImageView(activity);
-        ivOff.setId(View.generateViewId());
-        try {
-            ivOff.setImageResource(sDrawWhiteBall);
-        } catch (Exception e) {
-            GradientDrawable gd = new GradientDrawable();
-            gd.setColor(Color.WHITE);
-            gd.setShape(GradientDrawable.OVAL);
-            ivOff.setBackground(gd);
-        }
-        FrameLayout.LayoutParams offLp = new FrameLayout.LayoutParams(pxY42, pxY42);
-        offLp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
-        ivOff.setLayoutParams(offLp);
-
-        ImageView ivOn = new ImageView(activity);
-        ivOn.setId(View.generateViewId());
-        try {
-            ivOn.setImageResource(sDrawWhiteBall);
-        } catch (Exception e) {
-            GradientDrawable gd = new GradientDrawable();
-            gd.setColor(Color.WHITE);
-            gd.setShape(GradientDrawable.OVAL);
-            ivOn.setBackground(gd);
-        }
-        FrameLayout.LayoutParams onLp = new FrameLayout.LayoutParams(pxY42, pxY42);
-        onLp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
-        ivOn.setLayoutParams(onLp);
-
-        toggleFrame.addView(ivOff);
-        toggleFrame.addView(ivOn);
-
-        // 9. 音量触发行：与调试模式状态完全独立，但同样只在头像连点后显示。
-        final int volumeDividerId = View.generateViewId();
-        View volumeDivider = new View(activity);
-        volumeDivider.setId(volumeDividerId);
-        volumeDivider.setBackgroundColor(colorLine);
-        RelativeLayout.LayoutParams volumeDividerLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
-        volumeDividerLp.addRule(RelativeLayout.BELOW, debugClickAreaId);
-        volumeDividerLp.setMarginStart(pxX54);
-        volumeDivider.setLayoutParams(volumeDividerLp);
-
-        final int volumeClickAreaId = View.generateViewId();
+        int volumeClickAreaId = View.generateViewId();
         View volumeClickArea = new View(activity);
         volumeClickArea.setId(volumeClickAreaId);
+        volumeClickArea.setTag(HIDDEN_TOOLS_INJECTED_TAG);
         try {
-            volumeClickArea.setBackground(res.getDrawable(sDrawTransOrFafafa, null));
-        } catch (Exception ignored) {}
-        RelativeLayout.LayoutParams volumeAreaLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
-        volumeAreaLp.addRule(RelativeLayout.BELOW, volumeDividerId);
-        volumeClickArea.setLayoutParams(volumeAreaLp);
+            volumeClickArea.setBackground(resources.getDrawable(
+                    sDrawTransOrFafafa, null));
+        } catch (Throwable ignored) {
+        }
+        RelativeLayout.LayoutParams areaLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
+        areaLp.addRule(RelativeLayout.BELOW, dividerId);
+        volumeClickArea.setLayoutParams(areaLp);
 
         TextView volumeLabel = new TextView(activity);
         volumeLabel.setId(View.generateViewId());
         volumeLabel.setText("音量触发");
-        volumeLabel.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
-        volumeLabel.setTextColor(colorFont333);
+        volumeLabel.setTextSize(
+                android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
+        volumeLabel.setTextColor(textColor);
         volumeLabel.setGravity(Gravity.CENTER_VERTICAL);
         try {
-            Drawable triggerIcon = loadHiddenTriggerIcon(activity);
             volumeLabel.setCompoundDrawablesWithIntrinsicBounds(
-                    triggerIcon, null, null, null);
-        } catch (Exception ignored) {}
+                    loadHiddenTriggerIcon(activity), null, null, null);
+        } catch (Throwable ignored) {
+        }
         volumeLabel.setCompoundDrawablePadding(pxX18);
-        RelativeLayout.LayoutParams volumeLabelLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
-        volumeLabelLp.addRule(RelativeLayout.BELOW, volumeDividerId);
-        volumeLabel.setLayoutParams(volumeLabelLp);
+        RelativeLayout.LayoutParams labelLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
+        labelLp.addRule(RelativeLayout.BELOW, dividerId);
+        volumeLabel.setLayoutParams(labelLp);
 
-        FrameLayout volumeToggleFrame = new FrameLayout(activity);
-        volumeToggleFrame.setId(View.generateViewId());
+        FrameLayout volumeToggle = new FrameLayout(activity);
+        volumeToggle.setId(View.generateViewId());
         try {
-            volumeToggleFrame.setBackground(res.getDrawable(sDrawD8d8d8Green24, null));
-        } catch (Exception e) {
-            GradientDrawable gd = new GradientDrawable();
-            gd.setColor(Color.parseColor("#D8D8D8"));
-            gd.setCornerRadius(24f);
-            volumeToggleFrame.setBackground(gd);
+            volumeToggle.setBackground(resources.getDrawable(
+                    sDrawD8d8d8Green24, null));
+        } catch (Throwable ignored) {
+            GradientDrawable background = new GradientDrawable();
+            background.setColor(Color.parseColor("#D8D8D8"));
+            background.setCornerRadius(24f);
+            volumeToggle.setBackground(background);
         }
-        RelativeLayout.LayoutParams volumeToggleLp =
+        RelativeLayout.LayoutParams toggleLp =
                 new RelativeLayout.LayoutParams(pxX96, pxY48);
-        volumeToggleLp.addRule(RelativeLayout.ALIGN_PARENT_END);
-        volumeToggleLp.addRule(RelativeLayout.BELOW, volumeDividerId);
-        volumeToggleLp.topMargin = pxY36;
-        volumeToggleFrame.setLayoutParams(volumeToggleLp);
-        volumeToggleFrame.setPadding(pxY3, pxY3, pxY3, pxY3);
+        toggleLp.addRule(RelativeLayout.ALIGN_PARENT_END);
+        toggleLp.addRule(RelativeLayout.BELOW, dividerId);
+        toggleLp.topMargin = pxY36;
+        volumeToggle.setLayoutParams(toggleLp);
+        volumeToggle.setPadding(pxY3, pxY3, pxY3, pxY3);
 
-        ImageView volumeIvOff = new ImageView(activity);
-        volumeIvOff.setId(View.generateViewId());
-        try {
-            volumeIvOff.setImageResource(sDrawWhiteBall);
-        } catch (Exception e) {
-            GradientDrawable gd = new GradientDrawable();
-            gd.setColor(Color.WHITE);
-            gd.setShape(GradientDrawable.OVAL);
-            volumeIvOff.setBackground(gd);
-        }
-        FrameLayout.LayoutParams volumeOffLp =
-                new FrameLayout.LayoutParams(pxY42, pxY42);
-        volumeOffLp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
-        volumeIvOff.setLayoutParams(volumeOffLp);
+        ImageView volumeOff = createToggleBall(
+                activity, resources, pxY42, Gravity.START);
+        ImageView volumeOn = createToggleBall(
+                activity, resources, pxY42, Gravity.END);
+        volumeToggle.addView(volumeOff);
+        volumeToggle.addView(volumeOn);
 
-        ImageView volumeIvOn = new ImageView(activity);
-        volumeIvOn.setId(View.generateViewId());
-        try {
-            volumeIvOn.setImageResource(sDrawWhiteBall);
-        } catch (Exception e) {
-            GradientDrawable gd = new GradientDrawable();
-            gd.setColor(Color.WHITE);
-            gd.setShape(GradientDrawable.OVAL);
-            volumeIvOn.setBackground(gd);
-        }
-        FrameLayout.LayoutParams volumeOnLp =
-                new FrameLayout.LayoutParams(pxY42, pxY42);
-        volumeOnLp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
-        volumeIvOn.setLayoutParams(volumeOnLp);
-
-        volumeToggleFrame.addView(volumeIvOff);
-        volumeToggleFrame.addView(volumeIvOn);
-
-        // 10. 添加到布局
         parent.addView(divider);
-        parent.addView(debugClickArea);
-        parent.addView(debugLabel);
-        parent.addView(toggleFrame);
-        parent.addView(volumeDivider);
         parent.addView(volumeClickArea);
         parent.addView(volumeLabel);
-        parent.addView(volumeToggleFrame);
-        XposedBridge.log(TAG + " views added, childCount=" + parent.getChildCount());
-
-        // 11. 把原本紧跟护眼模式的所有原始 View 整体移到音量触发行之后。
-        // 后续各行仍依赖 view_modify_password / view_clear_catch 等锚点，
-        // 因此会随修改密码行自动顺延，无需逐行改写。
+        parent.addView(volumeToggle);
         rerouteOriginalChildrenBelow(
-                parent, originalChildCount, sIdViewProtectEyeMode, volumeClickAreaId);
+                parent, originalChildCount,
+                sIdViewProtectEyeMode, volumeClickAreaId);
         injectHiddenPageEntries(activity);
 
-        // 12. 两个开关分别读取、分别保存，互不联动。
-        SharedPreferences sp = activity.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        boolean isDebug = sp.getBoolean(KEY_DEBUG_MODE, false);
-        updateToggleUI(ivOff, ivOn, toggleFrame, isDebug);
-        boolean isVolumeTrigger = sp.getBoolean(KEY_VOLUME_TRIGGER, false);
-        updateToggleUI(volumeIvOff, volumeIvOn, volumeToggleFrame, isVolumeTrigger);
-
-        View.OnClickListener clickListener = new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                SharedPreferences sp = v.getContext()
-                        .getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-                boolean cur = sp.getBoolean(KEY_DEBUG_MODE, false);
-                sp.edit().putBoolean(KEY_DEBUG_MODE, !cur).apply();
-                updateToggleUI(ivOff, ivOn, toggleFrame, !cur);
-            }
+        updateToggleUI(
+                volumeOff, volumeOn, volumeToggle,
+                ModuleSettingsHook.isVolumeTriggerEnabled(activity));
+        View.OnClickListener listener = view -> {
+            boolean enabled = !ModuleSettingsHook
+                    .isVolumeTriggerEnabled(activity);
+            ModuleSettingsHook.setVolumeTriggerEnabled(
+                    activity, enabled);
+            updateToggleUI(
+                    volumeOff, volumeOn, volumeToggle, enabled);
         };
-        debugClickArea.setOnClickListener(clickListener);
-        toggleFrame.setOnClickListener(clickListener);
+        volumeClickArea.setOnClickListener(listener);
+        volumeToggle.setOnClickListener(listener);
+        registerVolumeListener(
+                activity, volumeOff, volumeOn, volumeToggle);
+        XposedBridge.log(TAG
+                + " hidden volume switch and tool entries injected.");
+    }
 
-        View.OnClickListener volumeClickListener = new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                SharedPreferences sp = v.getContext()
-                        .getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-                boolean cur = sp.getBoolean(KEY_VOLUME_TRIGGER, false);
-                sp.edit().putBoolean(KEY_VOLUME_TRIGGER, !cur).apply();
-                updateToggleUI(
-                        volumeIvOff, volumeIvOn, volumeToggleFrame, !cur);
-            }
-        };
-        volumeClickArea.setOnClickListener(volumeClickListener);
-        volumeToggleFrame.setOnClickListener(volumeClickListener);
+    private static ImageView createToggleBall(
+            Activity activity, Resources resources,
+            int size, int horizontalGravity) {
+        ImageView ball = new ImageView(activity);
+        ball.setId(View.generateViewId());
+        try {
+            ball.setImageResource(sDrawWhiteBall);
+        } catch (Throwable ignored) {
+            GradientDrawable background = new GradientDrawable();
+            background.setColor(Color.WHITE);
+            background.setShape(GradientDrawable.OVAL);
+            ball.setBackground(background);
+        }
+        FrameLayout.LayoutParams layoutParams =
+                new FrameLayout.LayoutParams(size, size);
+        layoutParams.gravity =
+                horizontalGravity | Gravity.CENTER_VERTICAL;
+        ball.setLayoutParams(layoutParams);
+        return ball;
+    }
 
-        XposedBridge.log(TAG + " hidden debug and volume switches injected: SUCCESS");
+    private static void registerVolumeListener(
+            Activity activity, ImageView off, ImageView on,
+            FrameLayout toggle) {
+        unregisterVolumeListener(activity);
+        SharedPreferences preferences = activity.getSharedPreferences(
+                SP_FILE, Context.MODE_PRIVATE);
+        SharedPreferences.OnSharedPreferenceChangeListener listener =
+                (sharedPreferences, key) -> {
+                    if (!KEY_VOLUME_TRIGGER.equals(key)) {
+                        return;
+                    }
+                    boolean enabled = sharedPreferences.getBoolean(
+                            KEY_VOLUME_TRIGGER, false);
+                    activity.runOnUiThread(() ->
+                            updateToggleUI(off, on, toggle, enabled));
+                };
+        VOLUME_LISTENERS.put(activity, listener);
+        preferences.registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    private static void unregisterVolumeListener(Activity activity) {
+        SharedPreferences.OnSharedPreferenceChangeListener listener =
+                VOLUME_LISTENERS.remove(activity);
+        if (listener != null) {
+            activity.getSharedPreferences(
+                            SP_FILE, Context.MODE_PRIVATE)
+                    .unregisterOnSharedPreferenceChangeListener(listener);
+        }
     }
 
     /**
@@ -417,46 +349,49 @@ public final class SettingsHook {
      */
     private static void injectHiddenPageEntries(Activity activity) {
         View aboutView = activity.findViewById(sIdViewAboutUs);
-        if (aboutView == null || !(aboutView.getParent() instanceof ViewGroup)) {
-            XposedBridge.log(TAG + " view_about_us missing; hidden pages not injected");
+        if (aboutView == null
+                || !(aboutView.getParent() instanceof ViewGroup)) {
+            XposedBridge.log(TAG
+                    + " about-platform row unavailable");
             return;
         }
-
         ViewGroup parent = (ViewGroup) aboutView.getParent();
         int originalChildCount = parent.getChildCount();
         int ossClickAreaId = addHiddenPageEntry(
                 activity, parent, sIdViewAboutUs, "OSS ToolKit",
-                v -> openHiddenPage(activity, EXTRA_OSS_TOOLKIT));
+                view -> openHiddenPage(activity, EXTRA_OSS_TOOLKIT));
         int moduleSettingsClickAreaId = addHiddenPageEntry(
                 activity, parent, ossClickAreaId, "模块设置",
-                v -> openHiddenPage(activity, EXTRA_MODULE_SETTINGS));
+                view -> openHiddenPage(
+                        activity, EXTRA_MODULE_SETTINGS));
         rerouteOriginalChildrenBelow(
                 parent, originalChildCount, sIdViewAboutUs,
                 moduleSettingsClickAreaId);
-        XposedBridge.log(TAG
-                + " OSS ToolKit and module settings entries injected below about platform");
     }
 
     private static int addHiddenPageEntry(
-            Activity activity, ViewGroup parent, int belowId, String title,
-            View.OnClickListener clickListener) {
-        Resources res = activity.getResources();
-        int pxY120 = res.getDimensionPixelSize(sDimY120);
-        int pxY1 = res.getDimensionPixelSize(sDimY1);
-        int pxX54 = res.getDimensionPixelSize(sDimX54);
-        int pxX18 = res.getDimensionPixelSize(sDimX18);
-        float textSize = res.getDimensionPixelSize(sDimX30);
-        int colorLine = safeColor(
-                res, sColorLineE8, Color.parseColor("#E8E8E8"));
-        int colorFont333 = safeColor(
-                res, sColorFont333, Color.parseColor("#333333"));
+            Activity activity, ViewGroup parent, int belowId,
+            String title, View.OnClickListener clickListener) {
+        Resources resources = activity.getResources();
+        int pxY120 = resources.getDimensionPixelSize(sDimY120);
+        int pxY1 = resources.getDimensionPixelSize(sDimY1);
+        int pxX54 = resources.getDimensionPixelSize(sDimX54);
+        int pxX18 = resources.getDimensionPixelSize(sDimX18);
+        float textSize = resources.getDimensionPixelSize(sDimX30);
+        int lineColor = safeColor(
+                resources, sColorLineE8,
+                Color.parseColor("#E8E8E8"));
+        int textColor = safeColor(
+                resources, sColorFont333,
+                Color.parseColor("#333333"));
 
         int dividerId = View.generateViewId();
         View divider = new View(activity);
         divider.setId(dividerId);
-        divider.setBackgroundColor(colorLine);
-        RelativeLayout.LayoutParams dividerLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
+        divider.setBackgroundColor(lineColor);
+        RelativeLayout.LayoutParams dividerLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, pxY1);
         dividerLp.addRule(RelativeLayout.BELOW, belowId);
         dividerLp.setMarginStart(pxX54);
         divider.setLayoutParams(dividerLp);
@@ -465,11 +400,13 @@ public final class SettingsHook {
         View clickArea = new View(activity);
         clickArea.setId(clickAreaId);
         try {
-            clickArea.setBackground(res.getDrawable(sDrawTransOrFafafa, null));
-        } catch (Exception ignored) {
+            clickArea.setBackground(resources.getDrawable(
+                    sDrawTransOrFafafa, null));
+        } catch (Throwable ignored) {
         }
-        RelativeLayout.LayoutParams areaLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
+        RelativeLayout.LayoutParams areaLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, pxY120);
         areaLp.addRule(RelativeLayout.BELOW, dividerId);
         clickArea.setLayoutParams(areaLp);
 
@@ -478,16 +415,18 @@ public final class SettingsHook {
         label.setText(title);
         label.setTextSize(
                 android.util.TypedValue.COMPLEX_UNIT_PX, textSize);
-        label.setTextColor(colorFont333);
+        label.setTextColor(textColor);
         label.setGravity(Gravity.CENTER_VERTICAL);
         try {
             label.setCompoundDrawablesWithIntrinsicBounds(
-                    res.getDrawable(sDrawMyImgAbout, null), null, null, null);
-        } catch (Exception ignored) {
+                    resources.getDrawable(sDrawMyImgAbout, null),
+                    null, null, null);
+        } catch (Throwable ignored) {
         }
         label.setCompoundDrawablePadding(pxX18);
-        RelativeLayout.LayoutParams labelLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
+        RelativeLayout.LayoutParams labelLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
         labelLp.addRule(RelativeLayout.BELOW, dividerId);
         label.setLayoutParams(labelLp);
 
@@ -495,10 +434,11 @@ public final class SettingsHook {
         arrow.setId(View.generateViewId());
         try {
             arrow.setImageResource(sDrawArrowRightCcc);
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
-        RelativeLayout.LayoutParams arrowLp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
+        RelativeLayout.LayoutParams arrowLp =
+                new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, pxY120);
         arrowLp.addRule(RelativeLayout.ALIGN_PARENT_END);
         arrowLp.addRule(RelativeLayout.BELOW, dividerId);
         arrow.setLayoutParams(arrowLp);
@@ -513,95 +453,110 @@ public final class SettingsHook {
         return clickAreaId;
     }
 
-    private static void openHiddenPage(Activity activity, String extra) {
+    private static void openHiddenPage(
+            Activity activity, String extra) {
         Intent intent = new Intent();
-        intent.setClassName(activity.getPackageName(), HIDDEN_PAGE_ACTIVITY);
+        intent.setClassName(
+                activity.getPackageName(), HIDDEN_PAGE_ACTIVITY);
         intent.putExtra("isStudentType", true);
         intent.putExtra(extra, true);
         activity.startActivity(intent);
     }
 
-    // ── 动态解析所有资源 ID ──
-
-    private static void ensureIdsResolved(Resources res, String pkg) {
-        if (!sIdsResolved) {
-            synchronized (SettingsHook.class) {
-                if (!sIdsResolved) {
-                    resolveAllIds(res, pkg);
-                    sIdsResolved = true;
-                }
+    private static void ensureIdsResolved(
+            Resources resources, String packageName) {
+        if (sIdsResolved) {
+            return;
+        }
+        synchronized (SettingsHook.class) {
+            if (sIdsResolved) {
+                return;
             }
+            sIdStuHeadIcon = resources.getIdentifier(
+                    "iv_stu_head_icon", "id", packageName);
+            sIdViewProtectEyeMode = resources.getIdentifier(
+                    "view_protect_eye_mode", "id", packageName);
+            sIdViewAboutUs = resources.getIdentifier(
+                    "view_about_us", "id", packageName);
+            sDrawTransOrFafafa = resources.getIdentifier(
+                    "trans_or_fafafa_selector",
+                    "drawable", packageName);
+            sDrawD8d8d8Green24 = resources.getIdentifier(
+                    "d8d8d8_or_student_green_24_corner",
+                    "drawable", packageName);
+            sDrawWhiteBall = resources.getIdentifier(
+                    "white_ball", "drawable", packageName);
+            sDrawMyImgEye = resources.getIdentifier(
+                    "my_img_eye", "drawable", packageName);
+            sDrawMyImgAbout = resources.getIdentifier(
+                    "my_img_about", "drawable", packageName);
+            sDrawArrowRightCcc = resources.getIdentifier(
+                    "icon_arrow_right_ccc", "drawable", packageName);
+            sColorLineE8 = resources.getIdentifier(
+                    "line_E8E8E8", "color", packageName);
+            sColorFont333 = resources.getIdentifier(
+                    "font_333333", "color", packageName);
+            sDimX18 = resources.getIdentifier(
+                    "x18", "dimen", packageName);
+            sDimX30 = resources.getIdentifier(
+                    "x30", "dimen", packageName);
+            sDimX54 = resources.getIdentifier(
+                    "x54", "dimen", packageName);
+            sDimX96 = resources.getIdentifier(
+                    "x96", "dimen", packageName);
+            sDimY1 = resources.getIdentifier(
+                    "y1", "dimen", packageName);
+            sDimY3 = resources.getIdentifier(
+                    "y3", "dimen", packageName);
+            sDimY36 = resources.getIdentifier(
+                    "y36", "dimen", packageName);
+            sDimY42 = resources.getIdentifier(
+                    "y42", "dimen", packageName);
+            sDimY48 = resources.getIdentifier(
+                    "y48", "dimen", packageName);
+            sDimY120 = resources.getIdentifier(
+                    "y120", "dimen", packageName);
+            sIdsResolved = true;
         }
     }
 
-    private static void resolveAllIds(Resources res, String pkg) {
-        XposedBridge.log(TAG + " resolving resource IDs for package: " + pkg);
-
-        sIdStuHeadIcon = res.getIdentifier("iv_stu_head_icon", "id", pkg);
-        sIdViewProtectEyeMode = res.getIdentifier("view_protect_eye_mode", "id", pkg);
-        sIdViewAboutUs = res.getIdentifier("view_about_us", "id", pkg);
-        XposedBridge.log(TAG + " ids: protEye=" + sIdViewProtectEyeMode);
-
-        sDrawTransOrFafafa  = res.getIdentifier("trans_or_fafafa_selector",          "drawable", pkg);
-        sDrawD8d8d8Green24  = res.getIdentifier("d8d8d8_or_student_green_24_corner", "drawable", pkg);
-        sDrawWhiteBall      = res.getIdentifier("white_ball",                         "drawable", pkg);
-        sDrawMyImgEye       = res.getIdentifier("my_img_eye",                         "drawable", pkg);
-        sDrawMyImgAbout     = res.getIdentifier("my_img_about",                       "drawable", pkg);
-        sDrawArrowRightCcc  = res.getIdentifier("icon_arrow_right_ccc",               "drawable", pkg);
-        sColorLineE8  = res.getIdentifier("line_E8E8E8", "color", pkg);
-        sColorFont333 = res.getIdentifier("font_333333", "color", pkg);
-
-        sDimX18  = res.getIdentifier("x18",  "dimen", pkg);
-        sDimX30  = res.getIdentifier("x30",  "dimen", pkg);
-        sDimX54  = res.getIdentifier("x54",  "dimen", pkg);
-        sDimX96  = res.getIdentifier("x96",  "dimen", pkg);
-        sDimY1   = res.getIdentifier("y1",   "dimen", pkg);
-        sDimY3   = res.getIdentifier("y3",   "dimen", pkg);
-        sDimY36  = res.getIdentifier("y36",  "dimen", pkg);
-        sDimY42  = res.getIdentifier("y42",  "dimen", pkg);
-        sDimY48  = res.getIdentifier("y48",  "dimen", pkg);
-        sDimY120 = res.getIdentifier("y120", "dimen", pkg);
-
-        XposedBridge.log(TAG + " all resource IDs resolved");
-    }
-
-    private static void rerouteOriginalChildrenBelow(ViewGroup parent, int originalChildCount,
-                                                      int oldBelowId, int newBelowId) {
+    private static void rerouteOriginalChildrenBelow(
+            ViewGroup parent, int originalChildCount,
+            int oldBelowId, int newBelowId) {
         int reroutedCount = 0;
-        int count = Math.min(originalChildCount, parent.getChildCount());
-        for (int i = 0; i < count; i++) {
-            View view = parent.getChildAt(i);
+        int count = Math.min(
+                originalChildCount, parent.getChildCount());
+        for (int index = 0; index < count; index++) {
+            View view = parent.getChildAt(index);
             ViewGroup.LayoutParams raw = view.getLayoutParams();
             if (!(raw instanceof RelativeLayout.LayoutParams)) {
                 continue;
             }
-
-            RelativeLayout.LayoutParams lp = (RelativeLayout.LayoutParams) raw;
-            if (lp.getRules()[RelativeLayout.BELOW] != oldBelowId) {
+            RelativeLayout.LayoutParams layoutParams =
+                    (RelativeLayout.LayoutParams) raw;
+            if (layoutParams.getRules()[RelativeLayout.BELOW]
+                    != oldBelowId) {
                 continue;
             }
-
-            lp.getRules()[RelativeLayout.BELOW] = 0;
-            lp.addRule(RelativeLayout.BELOW, newBelowId);
-            view.setLayoutParams(lp);
+            layoutParams.getRules()[RelativeLayout.BELOW] = 0;
+            layoutParams.addRule(RelativeLayout.BELOW, newBelowId);
+            view.setLayoutParams(layoutParams);
             reroutedCount++;
         }
-        XposedBridge.log(TAG + " rerouted " + reroutedCount
-                + " original views below debug mode");
+        XposedBridge.log(TAG + " rerouted "
+                + reroutedCount + " original setting views");
     }
 
-    private static void updateToggleUI(ImageView ivOff, ImageView ivOn,
-                                       FrameLayout toggleFrame, boolean isDebug) {
-        ivOff.setVisibility(isDebug ? View.GONE : View.VISIBLE);
-        ivOn.setVisibility(isDebug ? View.VISIBLE : View.GONE);
-        toggleFrame.setSelected(isDebug);
+    private static void updateToggleUI(
+            ImageView off, ImageView on,
+            FrameLayout toggle, boolean enabled) {
+        off.setVisibility(enabled ? View.GONE : View.VISIBLE);
+        on.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        toggle.setSelected(enabled);
     }
 
-    /**
-     * 从模块自身资源中按设备密度选取 24/36/48 px 图标。LSPatch 环境若无法
-     * 创建模块包 Context，则退回目标应用原有护眼图标，避免设置页缺图。
-     */
-    private static Drawable loadHiddenTriggerIcon(Activity activity) {
+    private static Drawable loadHiddenTriggerIcon(
+            Activity activity) {
         try {
             Context moduleContext = activity.createPackageContext(
                     MODULE_PACKAGE, Context.CONTEXT_IGNORE_SECURITY);
@@ -611,17 +566,20 @@ public final class SettingsHook {
             if (iconId != 0) {
                 return moduleResources.getDrawable(iconId, null);
             }
-        } catch (Exception e) {
+        } catch (Throwable t) {
             XposedBridge.log(TAG + " module icon fallback: "
-                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    + t.getClass().getSimpleName() + ": "
+                    + t.getMessage());
         }
-        return activity.getResources().getDrawable(sDrawMyImgEye, null);
+        return activity.getResources().getDrawable(
+                sDrawMyImgEye, null);
     }
 
-    private static int safeColor(Resources res, int resId, int fallback) {
+    private static int safeColor(
+            Resources resources, int resourceId, int fallback) {
         try {
-            return res.getColor(resId, null);
-        } catch (Exception e) {
+            return resources.getColor(resourceId, null);
+        } catch (Throwable ignored) {
             return fallback;
         }
     }

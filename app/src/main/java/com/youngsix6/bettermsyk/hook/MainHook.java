@@ -37,6 +37,7 @@ public class MainHook implements IXposedHookLoadPackage {
         CacheControlHook.init(lpparam);
         SplashImageHook.init(lpparam);
         CustomMacHook.init(lpparam);
+        MultiUserLoginHook.init(lpparam);
         ProtocolOverrideHook.init(lpparam);
         AboutDebugCodeHook.init(lpparam);
         SettingsHook.init(lpparam);
@@ -46,5 +47,12 @@ public class MainHook implements IXposedHookLoadPackage {
         HomeworkListDebugHook.init(lpparam);
         OssToolkitHook.init(lpparam);
         ModuleSettingsHook.init(lpparam);
+        CompactModeHook.init(lpparam);
+        ForceExitHook.init(lpparam);
+        LauncherIsolationHook.init(lpparam);
+        DisplayIdentityHook.init(lpparam);
+        SystemHomeworkPickerHook.init(lpparam);
+        HomeworkAudioFileHook.init(lpparam);
+        HomeworkTimeLimitHook.init(lpparam);
     }
 }

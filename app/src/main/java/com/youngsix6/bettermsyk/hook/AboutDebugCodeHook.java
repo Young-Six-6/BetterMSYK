@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.view.View;
@@ -24,13 +23,11 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 在调试模式下为“关于软件”页面增加临时编码生成入口。
+ * 对应模块设置开启时，为“关于软件”页面增加临时编码生成入口。
  */
 public final class AboutDebugCodeHook {
 
     private static final String TAG = "[BetterMSYK]";
-    private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String TARGET_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.teacher.AboutMsykActivity";
     private static final String BUTTON_TAG = "bettermsyk_generate_debug_codes";
@@ -53,7 +50,8 @@ public final class AboutDebugCodeHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Activity activity = (Activity) param.thisObject;
-                            if (!isDebugMode(activity)) {
+                            if (!ModuleSettingsHook
+                                    .isDebugCodeGeneratorEnabled(activity)) {
                                 return;
                             }
                             injectGenerateButton(activity);
@@ -380,12 +378,6 @@ public final class AboutDebugCodeHook {
             value.append(character);
         }
         return value.toString();
-    }
-
-    private static boolean isDebugMode(Context context) {
-        SharedPreferences preferences =
-                context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        return preferences.getBoolean(KEY_DEBUG_MODE, false);
     }
 
     private static final class GeneratedCode {

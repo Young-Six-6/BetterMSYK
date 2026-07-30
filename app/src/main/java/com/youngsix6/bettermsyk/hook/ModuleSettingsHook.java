@@ -17,7 +17,10 @@ import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -52,6 +55,43 @@ public final class ModuleSettingsHook {
     private static final String SP_FILE = "system_properties";
     private static final String KEY_DISABLE_UPDATE = "disableAppUpdate";
     private static final String KEY_DISABLE_GLOBAL_CACHE = "disableGlobalCache";
+    private static final String KEY_MULTI_USER_LOGIN = "multiUserLoginEnabled";
+    private static final String KEY_COMPACT_MODE = "compactModeEnabled";
+    private static final String KEY_FORCE_EXIT = "forceExitEnabled";
+    private static final String KEY_SYSTEM_HOMEWORK_PICKER =
+            "systemHomeworkPickerEnabled";
+    private static final String KEY_HOMEWORK_AUDIO_FILE =
+            "homeworkAudioFileEnabled";
+    private static final String KEY_IGNORE_HOMEWORK_TIME_LIMIT =
+            "ignoreHomeworkTimeLimitEnabled";
+    private static final String KEY_HIDDEN_INJECTION_ALWAYS_VISIBLE =
+            "hiddenInjectionAlwaysVisible";
+    private static final String LEGACY_KEY_DEBUG_MODE = "isDebugMode";
+    private static final String KEY_DEBUG_FEATURES_MIGRATED =
+            "debugFeaturesMigratedV1";
+    private static final String KEY_ONE_CLICK_CORRECT =
+            "oneClickCorrectEnabled";
+    private static final String KEY_ANSWER_VIEW =
+            "unsubmittedAnswerViewEnabled";
+    private static final String KEY_LEARNING_PROJECT_OVERRIDE =
+            "learningProjectOverrideEnabled";
+    private static final String KEY_PROTOCOL_OVERRIDE =
+            "serviceAgreementOverrideEnabled";
+    private static final String KEY_DEBUG_CODE_GENERATOR =
+            "debugCodeGeneratorEnabled";
+    private static final String KEY_HOMEWORK_ID_DISPLAY =
+            "homeworkIdDisplayEnabled";
+    private static final String KEY_CUSTOM_MAC =
+            "customMacInputEnabled";
+    private static final String KEY_VOLUME_TRIGGER =
+            "isVolumeTriggerEnabled";
+    private static final String KEY_LAUNCHER_ISOLATION =
+            "launcherIsolationEnabled";
+    private static final String KEY_DISPLAY_NAME = "displayAliasName";
+    private static final String KEY_DISPLAY_STUDENT_NUMBER =
+            "displayAliasStudentNumber";
+    private static final String KEY_DISPLAY_SCHOOL = "displayAliasSchool";
+    private static final String KEY_DISPLAY_GRADE = "displayAliasGrade";
     private static final String KEY_CUSTOM_SPLASH_ENABLED = "customSplashEnabled";
     private static final String KEY_CUSTOM_SPLASH_NAME = "customSplashName";
     private static final String CUSTOM_SPLASH_DIRECTORY = "bettermsyk";
@@ -62,6 +102,7 @@ public final class ModuleSettingsHook {
             Executors.newSingleThreadExecutor();
     private static final Map<Activity, SplashSettingsController> CONTROLLERS =
             Collections.synchronizedMap(new WeakHashMap<>());
+    private static volatile boolean legacyDebugMigrationChecked;
 
     private ModuleSettingsHook() {
     }
@@ -182,6 +223,113 @@ public final class ModuleSettingsHook {
                 .getBoolean(KEY_DISABLE_GLOBAL_CACHE, false);
     }
 
+    static boolean isMultiUserLoginEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_MULTI_USER_LOGIN, false);
+    }
+
+    static boolean isCompactModeEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_COMPACT_MODE, false);
+    }
+
+    static boolean isForceExitEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_FORCE_EXIT, false);
+    }
+
+    static boolean isSystemHomeworkPickerEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_SYSTEM_HOMEWORK_PICKER, false);
+    }
+
+    static boolean isHomeworkAudioFileEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_HOMEWORK_AUDIO_FILE, false);
+    }
+
+    static boolean isHomeworkTimeLimitIgnored(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_IGNORE_HOMEWORK_TIME_LIMIT, false);
+    }
+
+    static boolean isHiddenInjectionAlwaysVisible(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_HIDDEN_INJECTION_ALWAYS_VISIBLE, false);
+    }
+
+    static boolean isOneClickCorrectEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_ONE_CLICK_CORRECT);
+    }
+
+    static boolean isUnsubmittedAnswerViewEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_ANSWER_VIEW);
+    }
+
+    static boolean isLearningProjectOverrideEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_LEARNING_PROJECT_OVERRIDE);
+    }
+
+    static boolean isServiceAgreementOverrideEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_PROTOCOL_OVERRIDE);
+    }
+
+    static boolean isDebugCodeGeneratorEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_DEBUG_CODE_GENERATOR);
+    }
+
+    static boolean isHomeworkIdDisplayEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_HOMEWORK_ID_DISPLAY);
+    }
+
+    static boolean isCustomMacInputEnabled(Context context) {
+        ensureLegacyDebugMigrated(context);
+        return getBoolean(context, KEY_CUSTOM_MAC);
+    }
+
+    static boolean isVolumeTriggerEnabled(Context context) {
+        return getBoolean(context, KEY_VOLUME_TRIGGER);
+    }
+
+    static void setVolumeTriggerEnabled(
+            Context context, boolean enabled) {
+        context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_VOLUME_TRIGGER, enabled)
+                .apply();
+    }
+
+    static boolean isLauncherIsolationEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_LAUNCHER_ISOLATION, false);
+    }
+
+    static String getDisplayName(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getString(KEY_DISPLAY_NAME, "").trim();
+    }
+
+    static String getDisplayStudentNumber(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getString(KEY_DISPLAY_STUDENT_NUMBER, "").trim();
+    }
+
+    static String getDisplaySchool(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getString(KEY_DISPLAY_SCHOOL, "").trim();
+    }
+
+    static String getDisplayGrade(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getString(KEY_DISPLAY_GRADE, "").trim();
+    }
+
     static File getCustomSplashFile(Context context) {
         return new File(new File(context.getFilesDir(), CUSTOM_SPLASH_DIRECTORY),
                 CUSTOM_SPLASH_FILE);
@@ -202,6 +350,7 @@ public final class ModuleSettingsHook {
 
     private static void buildSettingsContent(
             Activity activity, LinearLayout settingsContainer) {
+        ensureLegacyDebugMigrated(activity);
         ScrollView scrollView = new ScrollView(activity);
         scrollView.setFillViewport(true);
         LinearLayout content = new LinearLayout(activity);
@@ -232,6 +381,11 @@ public final class ModuleSettingsHook {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         descriptionLp.topMargin = dp(activity, 5);
         content.addView(description, descriptionLp);
+
+        addSettingsSectionHeader(
+                activity, content,
+                "通用设置",
+                "应用运行、更新和登录相关的基础行为。");
 
         LinearLayout updateCard = new LinearLayout(activity);
         updateCard.setOrientation(LinearLayout.HORIZONTAL);
@@ -301,11 +455,795 @@ public final class ModuleSettingsHook {
         updateCard.setOnClickListener(v ->
                 updateSwitch.setChecked(!updateSwitch.isChecked()));
 
+        buildGlobalCacheSetting(activity, content, preferences);
+        LinkedSettingsController linkedSettings =
+                new LinkedSettingsController();
+        buildMultiUserLoginSetting(
+                activity, content, preferences, linkedSettings);
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_CUSTOM_MAC,
+                "自定义设备 MAC",
+                "登录页显示自定义 MAC 输入框；和多用户登录联动",
+                "不显示自定义 MAC；关闭时会联动关闭多用户登录",
+                "自定义设备 MAC 已启用，和多用户登录联动",
+                "自定义设备 MAC 已关闭，多用户登录也已关闭",
+                linkedSettings);
+
+        addSettingsSectionHeader(
+                activity, content,
+                "模块设置",
+                "控制模块入口以及原调试模式拆分出的独立能力。");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_HIDDEN_INJECTION_ALWAYS_VISIBLE,
+                "隐藏注入常显",
+                "“我的”页面直接显示隐藏项目，无需点击头像",
+                "隐藏注入项默认隐藏，连续点击头像 7 次后显示",
+                "隐藏注入常显已启用，重新进入“我的”页面后生效",
+                "隐藏注入常显已关闭，重新进入“我的”页面后恢复头像触发");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_VOLUME_TRIGGER,
+                "音量触发",
+                "答题卡页面连续按三次音量下触发自动填充",
+                "音量键不触发自动填充",
+                "音量触发已启用，与“我的”页面同步",
+                "音量触发已关闭，与“我的”页面同步");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_LEARNING_PROJECT_OVERRIDE,
+                "强制开放学习项目",
+                "开放问题问答、课题研究、典型案例及校本练习",
+                "学习项目是否开放由服务器配置决定",
+                "学习项目强制开放已启用",
+                "学习项目强制开放已关闭");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_PROTOCOL_OVERRIDE,
+                "覆写用户服务协议",
+                "追加模块用户政策",
+                "用户服务协议使用应用原有页面",
+                "用户服务协议覆写已启用",
+                "用户服务协议覆写已关闭");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_DEBUG_CODE_GENERATOR,
+                "调试编码生成",
+                "关于平台页显示编码生成入口，点击后复制 code1 和 code2",
+                "关于平台页不显示编码生成入口",
+                "调试编码生成已启用",
+                "调试编码生成已关闭");
+
+        addSettingsSectionHeader(
+                activity, content,
+                "作业相关",
+                "控制作业答题、材料选择、计时和辅助信息。");
+        buildSystemHomeworkPickerSetting(activity, content, preferences);
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_HOMEWORK_AUDIO_FILE,
+                "上传文件替代录音",
+                "题目添加录音时选择 MP3 文件",
+                "题目添加录音时使用应用内置录音器",
+                "上传文件替代录音已启用",
+                "上传文件替代录音已关闭");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_IGNORE_HOMEWORK_TIME_LIMIT,
+                "不进行作业用时限制",
+                "限时作业不启动限时或累计计时，仍保留原截止时间；普通作业不受影响",
+                "限时作业按原规则计时并在超时后处理",
+                "已关闭限时作业计时，重新进入作业后生效",
+                "已恢复限时作业计时，重新进入作业后生效");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_ONE_CLICK_CORRECT,
+                "一键正确",
+                "未提交作业的计时器旁显示一键正确按钮",
+                "不显示一键正确按钮",
+                "一键正确按钮已启用",
+                "一键正确按钮已关闭");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_ANSWER_VIEW,
+                "未提交作业答案解析",
+                "未提交作业也显示答案解析入口，保留答题卡和提交逻辑",
+                "答案解析入口遵循应用原有作业状态",
+                "未提交作业答案解析已启用",
+                "未提交作业答案解析已关闭");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_HOMEWORK_ID_DISPLAY,
+                "显示作业 ID",
+                "在学生作业列表灰色辅助信息中附加 id",
+                "作业列表不额外显示 homeworkId",
+                "作业 ID 显示已启用",
+                "作业 ID 显示已关闭");
+
+        addSettingsSectionHeader(
+                activity, content,
+                "个性化",
+                "调整开屏、首页布局和界面显示身份。");
         SplashSettingsController splashController =
                 new SplashSettingsController(activity, content);
         CONTROLLERS.put(activity, splashController);
         splashController.build();
-        buildGlobalCacheSetting(activity, content, preferences);
+        buildCompactModeSetting(activity, content, preferences);
+        buildDisplayIdentitySetting(activity, content, preferences);
+
+        addSettingsSectionHeader(
+                activity, content,
+                "其他",
+                "兼容性和特殊场景相关行为。");
+        buildForceExitSetting(activity, content, preferences);
+        buildLauncherIsolationSetting(activity, content, preferences);
+    }
+
+    private static void buildSystemHomeworkPickerSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences) {
+        LinearLayout pickerCard = new LinearLayout(activity);
+        pickerCard.setOrientation(LinearLayout.HORIZONTAL);
+        pickerCard.setGravity(Gravity.CENTER_VERTICAL);
+        pickerCard.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        pickerCard.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        pickerCard.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(pickerCard, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText("使用系统选择器代替内置选择器");
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        pickerCard.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch pickerSwitch = new Switch(activity);
+        pickerSwitch.setShowText(false);
+        pickerSwitch.setContentDescription("使用系统选择器代替内置选择器");
+        styleSwitch(pickerSwitch);
+        LinearLayout.LayoutParams switchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        switchLp.leftMargin = dp(activity, 18);
+        pickerCard.addView(pickerSwitch, switchLp);
+
+        boolean enabled = preferences.getBoolean(
+                KEY_SYSTEM_HOMEWORK_PICKER, false);
+        pickerSwitch.setChecked(enabled);
+        updateSystemHomeworkPickerSummary(summary, enabled);
+        pickerSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            preferences.edit()
+                    .putBoolean(KEY_SYSTEM_HOMEWORK_PICKER, checked)
+                    .apply();
+            updateSystemHomeworkPickerSummary(summary, checked);
+            Toast.makeText(activity,
+                    checked
+                            ? "作业上传图片将使用系统选择器"
+                            : "作业上传图片已恢复内置选择器",
+                    Toast.LENGTH_SHORT).show();
+            XposedBridge.log(TAG
+                    + " system homework picker changed: " + checked);
+        });
+        pickerCard.setOnClickListener(v ->
+                pickerSwitch.setChecked(!pickerSwitch.isChecked()));
+    }
+
+    private static void addSettingsSectionHeader(
+            Activity activity, LinearLayout content,
+            String titleText, String descriptionText) {
+        TextView heading = new TextView(activity);
+        heading.setText(titleText);
+        heading.setTextSize(19);
+        heading.setTextColor(Color.parseColor("#18201B"));
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams headingLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        headingLp.topMargin = dp(activity, 26);
+        content.addView(heading, headingLp);
+
+        TextView description = new TextView(activity);
+        description.setText(descriptionText);
+        description.setTextSize(13);
+        description.setTextColor(Color.parseColor("#536158"));
+        LinearLayout.LayoutParams descriptionLp =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+        descriptionLp.topMargin = dp(activity, 5);
+        content.addView(description, descriptionLp);
+    }
+
+    private static void buildBooleanSwitchSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences, String key, String titleText,
+            String enabledSummary, String disabledSummary,
+            String enabledToast, String disabledToast) {
+        buildBooleanSwitchSetting(
+                activity, content, preferences, key, titleText,
+                enabledSummary, disabledSummary,
+                enabledToast, disabledToast, null);
+    }
+
+    private static void buildBooleanSwitchSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences, String key, String titleText,
+            String enabledSummary, String disabledSummary,
+            String enabledToast, String disabledToast,
+            LinkedSettingsController linkedSettings) {
+        LinearLayout card = new LinearLayout(activity);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        card.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        card.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(card, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText(titleText);
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        card.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch toggle = new Switch(activity);
+        toggle.setShowText(false);
+        toggle.setContentDescription(titleText);
+        styleSwitch(toggle);
+        LinearLayout.LayoutParams switchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        switchLp.leftMargin = dp(activity, 18);
+        card.addView(toggle, switchLp);
+
+        boolean enabled = preferences.getBoolean(key, false);
+        toggle.setChecked(enabled);
+        summary.setText(enabled ? enabledSummary : disabledSummary);
+        toggle.setOnCheckedChangeListener((buttonView, checked) -> {
+            summary.setText(checked ? enabledSummary : disabledSummary);
+            if (linkedSettings != null
+                    && linkedSettings.isSyncing()) {
+                return;
+            }
+            SharedPreferences.Editor editor =
+                    preferences.edit().putBoolean(key, checked);
+            if (KEY_CUSTOM_MAC.equals(key) && !checked) {
+                editor.putBoolean(KEY_MULTI_USER_LOGIN, false);
+            }
+            editor.apply();
+            if (KEY_CUSTOM_MAC.equals(key)
+                    && !checked
+                    && linkedSettings != null) {
+                linkedSettings.setMultiUserChecked(false);
+            }
+            Toast.makeText(activity,
+                    checked ? enabledToast : disabledToast,
+                    Toast.LENGTH_SHORT).show();
+            XposedBridge.log(TAG + " setting changed: "
+                    + key + "=" + checked);
+        });
+        card.setOnClickListener(v ->
+                toggle.setChecked(!toggle.isChecked()));
+        if (KEY_CUSTOM_MAC.equals(key)
+                && linkedSettings != null) {
+            linkedSettings.registerCustomMac(toggle);
+        }
+    }
+
+    private static void buildDisplayIdentitySetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences) {
+        LinearLayout identityCard = new LinearLayout(activity);
+        identityCard.setOrientation(LinearLayout.HORIZONTAL);
+        identityCard.setGravity(Gravity.CENTER_VERTICAL);
+        identityCard.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        identityCard.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        identityCard.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(identityCard, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText("显示身份");
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        identityCard.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button editButton = new Button(activity);
+        editButton.setText("修改");
+        styleActionButton(editButton, false);
+        LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonLp.leftMargin = dp(activity, 18);
+        identityCard.addView(editButton, buttonLp);
+
+        updateDisplayIdentitySummary(summary, preferences);
+        View.OnClickListener listener = view -> showDisplayIdentityDialog(
+                activity, preferences, summary);
+        identityCard.setOnClickListener(listener);
+        editButton.setOnClickListener(listener);
+    }
+
+    private static void showDisplayIdentityDialog(
+            Activity activity, SharedPreferences preferences,
+            TextView summary) {
+        LinearLayout form = new LinearLayout(activity);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setFocusableInTouchMode(true);
+        int horizontal = dp(activity, 24);
+        form.setPadding(horizontal, dp(activity, 8),
+                horizontal, dp(activity, 4));
+
+        TextView explanation = new TextView(activity);
+        explanation.setText("只替换界面显示，不修改账号资料或网络请求。");
+        explanation.setTextSize(13);
+        explanation.setTextColor(Color.parseColor("#536158"));
+        form.addView(explanation, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        EditText nameInput = addDisplayIdentityInput(
+                activity, form, "姓名", "留空则显示真实姓名",
+                preferences.getString(KEY_DISPLAY_NAME, ""));
+        EditText numberInput = addDisplayIdentityInput(
+                activity, form, "学号", "留空则显示真实学号",
+                preferences.getString(KEY_DISPLAY_STUDENT_NUMBER, ""));
+        EditText schoolInput = addDisplayIdentityInput(
+                activity, form, "学校", "留空则显示真实学校",
+                preferences.getString(KEY_DISPLAY_SCHOOL, ""));
+        EditText gradeInput = addDisplayIdentityInput(
+                activity, form, "年级", "留空则显示真实年级/班级",
+                preferences.getString(KEY_DISPLAY_GRADE, ""));
+
+        ScrollView formScroll = new ScrollView(activity);
+        formScroll.setFillViewport(false);
+        formScroll.setClipToPadding(false);
+        formScroll.addView(form, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog identityDialog = new AlertDialog.Builder(activity)
+                .setTitle("修改显示身份")
+                .setView(formScroll)
+                .setNegativeButton("取消", null)
+                .setNeutralButton("恢复原值", (dialog, which) -> {
+                    preferences.edit()
+                            .remove(KEY_DISPLAY_NAME)
+                            .remove(KEY_DISPLAY_STUDENT_NUMBER)
+                            .remove(KEY_DISPLAY_SCHOOL)
+                            .remove(KEY_DISPLAY_GRADE)
+                            .apply();
+                    updateDisplayIdentitySummary(summary, preferences);
+                    Toast.makeText(activity,
+                            "已恢复真实资料，重新进入页面后显示",
+                            Toast.LENGTH_SHORT).show();
+                })
+                .setPositiveButton("保存", (dialog, which) -> {
+                    SharedPreferences.Editor editor = preferences.edit();
+                    putDisplayAlias(editor, KEY_DISPLAY_NAME,
+                            nameInput.getText().toString());
+                    putDisplayAlias(editor, KEY_DISPLAY_STUDENT_NUMBER,
+                            numberInput.getText().toString());
+                    putDisplayAlias(editor, KEY_DISPLAY_SCHOOL,
+                            schoolInput.getText().toString());
+                    putDisplayAlias(editor, KEY_DISPLAY_GRADE,
+                            gradeInput.getText().toString());
+                    editor.apply();
+                    updateDisplayIdentitySummary(summary, preferences);
+                    Toast.makeText(activity,
+                            "显示身份已保存，重新进入页面后生效",
+                            Toast.LENGTH_SHORT).show();
+                    XposedBridge.log(TAG + " display identity aliases updated.");
+                })
+                .create();
+        identityDialog.setOnShowListener(ignored -> {
+            Window window = identityDialog.getWindow();
+            if (window != null) {
+                window.setSoftInputMode(
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                                | WindowManager.LayoutParams
+                                .SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+            }
+            form.requestFocus();
+        });
+        identityDialog.show();
+    }
+
+    private static EditText addDisplayIdentityInput(
+            Activity activity, LinearLayout form, String label,
+            String hint, String value) {
+        TextView title = new TextView(activity);
+        title.setText(label);
+        title.setTextSize(14);
+        title.setTextColor(Color.parseColor("#334139"));
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleLp.topMargin = dp(activity, 10);
+        form.addView(title, titleLp);
+
+        EditText input = new EditText(activity);
+        input.setSingleLine(true);
+        input.setText(value == null ? "" : value);
+        input.setHint(hint);
+        input.setTextSize(16);
+        input.setTextColor(Color.parseColor("#18201B"));
+        input.setHintTextColor(Color.parseColor("#7A857E"));
+        input.setSelectAllOnFocus(false);
+        form.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return input;
+    }
+
+    private static void putDisplayAlias(
+            SharedPreferences.Editor editor, String key, String value) {
+        String trimmed = value == null ? "" : value.trim();
+        if (trimmed.isEmpty()) {
+            editor.remove(key);
+        } else {
+            editor.putString(key, trimmed);
+        }
+    }
+
+    private static void buildLauncherIsolationSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences) {
+        LinearLayout isolationCard = new LinearLayout(activity);
+        isolationCard.setOrientation(LinearLayout.HORIZONTAL);
+        isolationCard.setGravity(Gravity.CENTER_VERTICAL);
+        isolationCard.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        isolationCard.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        isolationCard.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(isolationCard, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText("禁止 Launcher 交互");
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        isolationCard.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch isolationSwitch = new Switch(activity);
+        isolationSwitch.setShowText(false);
+        isolationSwitch.setContentDescription("禁止 Launcher 交互");
+        styleSwitch(isolationSwitch);
+        LinearLayout.LayoutParams switchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        switchLp.leftMargin = dp(activity, 18);
+        isolationCard.addView(isolationSwitch, switchLp);
+
+        boolean enabled = preferences.getBoolean(
+                KEY_LAUNCHER_ISOLATION, false);
+        isolationSwitch.setChecked(enabled);
+        updateLauncherIsolationSummary(summary, enabled);
+        isolationSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            preferences.edit()
+                    .putBoolean(KEY_LAUNCHER_ISOLATION, checked)
+                    .apply();
+            if (checked) {
+                LauncherIsolationHook.applyNow(activity);
+            }
+            updateLauncherIsolationSummary(summary, checked);
+            Toast.makeText(activity,
+                    checked
+                            ? "已停止与 Launcher3 交互，即时生效"
+                            : "已允许 Launcher3 交互，重启应用后完整恢复",
+                    Toast.LENGTH_SHORT).show();
+            XposedBridge.log(TAG
+                    + " launcher isolation changed: " + checked);
+        });
+        isolationCard.setOnClickListener(v ->
+                isolationSwitch.setChecked(!isolationSwitch.isChecked()));
+    }
+
+    private static void buildForceExitSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences) {
+        LinearLayout exitCard = new LinearLayout(activity);
+        exitCard.setOrientation(LinearLayout.HORIZONTAL);
+        exitCard.setGravity(Gravity.CENTER_VERTICAL);
+        exitCard.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        exitCard.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        exitCard.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(exitCard, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText("允许强制退出");
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        exitCard.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch exitSwitch = new Switch(activity);
+        exitSwitch.setShowText(false);
+        exitSwitch.setContentDescription("允许强制退出");
+        styleSwitch(exitSwitch);
+        LinearLayout.LayoutParams switchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        switchLp.leftMargin = dp(activity, 18);
+        exitCard.addView(exitSwitch, switchLp);
+
+        boolean enabled = preferences.getBoolean(KEY_FORCE_EXIT, false);
+        exitSwitch.setChecked(enabled);
+        updateForceExitSummary(summary, enabled);
+        exitSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            preferences.edit()
+                    .putBoolean(KEY_FORCE_EXIT, checked)
+                    .apply();
+            updateForceExitSummary(summary, checked);
+            Toast.makeText(activity,
+                    checked
+                            ? "允许强制退出已启用，即时生效"
+                            : "允许强制退出已关闭，恢复应用原有限制",
+                    Toast.LENGTH_SHORT).show();
+            XposedBridge.log(TAG + " force exit changed: " + checked);
+        });
+        exitCard.setOnClickListener(v ->
+                exitSwitch.setChecked(!exitSwitch.isChecked()));
+    }
+
+    private static void buildCompactModeSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences) {
+        LinearLayout compactCard = new LinearLayout(activity);
+        compactCard.setOrientation(LinearLayout.HORIZONTAL);
+        compactCard.setGravity(Gravity.CENTER_VERTICAL);
+        compactCard.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        compactCard.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        compactCard.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(compactCard, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText("精简模式");
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        compactCard.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch compactSwitch = new Switch(activity);
+        compactSwitch.setShowText(false);
+        compactSwitch.setContentDescription("精简模式");
+        styleSwitch(compactSwitch);
+        LinearLayout.LayoutParams switchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        switchLp.leftMargin = dp(activity, 18);
+        compactCard.addView(compactSwitch, switchLp);
+
+        boolean enabled = preferences.getBoolean(KEY_COMPACT_MODE, false);
+        compactSwitch.setChecked(enabled);
+        updateCompactModeSummary(summary, enabled);
+        compactSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            preferences.edit()
+                    .putBoolean(KEY_COMPACT_MODE, checked)
+                    .apply();
+            updateCompactModeSummary(summary, checked);
+            Toast.makeText(activity,
+                    checked
+                            ? "精简模式已启用，返回学生主页后生效"
+                            : "精简模式已关闭，返回学生主页后恢复",
+                    Toast.LENGTH_SHORT).show();
+            XposedBridge.log(TAG + " compact mode changed: " + checked);
+        });
+        compactCard.setOnClickListener(v ->
+                compactSwitch.setChecked(!compactSwitch.isChecked()));
+    }
+
+    private static void buildMultiUserLoginSetting(
+            Activity activity, LinearLayout content,
+            SharedPreferences preferences,
+            LinkedSettingsController linkedSettings) {
+        LinearLayout accountCard = new LinearLayout(activity);
+        accountCard.setOrientation(LinearLayout.HORIZONTAL);
+        accountCard.setGravity(Gravity.CENTER_VERTICAL);
+        accountCard.setPadding(dp(activity, 18), dp(activity, 16),
+                dp(activity, 18), dp(activity, 16));
+        accountCard.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        accountCard.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(accountCard, cardLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(activity);
+        title.setText("多用户登录");
+        title.setTextSize(17);
+        title.setTextColor(Color.parseColor("#18201B"));
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+
+        TextView summary = new TextView(activity);
+        summary.setTextSize(13);
+        summary.setTextColor(Color.parseColor("#536158"));
+        summary.setLineSpacing(0, 1.12f);
+        LinearLayout.LayoutParams summaryLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        summaryLp.topMargin = dp(activity, 4);
+        labels.addView(summary, summaryLp);
+        accountCard.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Switch accountSwitch = new Switch(activity);
+        accountSwitch.setShowText(false);
+        accountSwitch.setContentDescription("多用户登录");
+        styleSwitch(accountSwitch);
+        LinearLayout.LayoutParams switchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        switchLp.leftMargin = dp(activity, 18);
+        accountCard.addView(accountSwitch, switchLp);
+
+        boolean enabled = preferences.getBoolean(
+                KEY_MULTI_USER_LOGIN, false);
+        if (enabled && !preferences.getBoolean(
+                KEY_CUSTOM_MAC, false)) {
+            preferences.edit()
+                    .putBoolean(KEY_CUSTOM_MAC, true)
+                    .apply();
+        }
+        accountSwitch.setChecked(enabled);
+        updateMultiUserSummary(summary, enabled);
+        accountSwitch.setOnCheckedChangeListener((buttonView, checked) -> {
+            updateMultiUserSummary(summary, checked);
+            if (linkedSettings.isSyncing()) {
+                return;
+            }
+            SharedPreferences.Editor editor = preferences.edit()
+                    .putBoolean(KEY_MULTI_USER_LOGIN, checked);
+            if (checked) {
+                editor.putBoolean(KEY_CUSTOM_MAC, true);
+            }
+            editor.apply();
+            if (checked) {
+                linkedSettings.setCustomMacChecked(true);
+            }
+            Toast.makeText(activity,
+                    checked
+                            ? "多用户登录已启用，并联动开启自定义设备 MAC"
+                            : "多用户登录已停用，已保存账号不会删除",
+                    Toast.LENGTH_SHORT).show();
+            XposedBridge.log(TAG
+                    + " multi-user login changed: " + checked);
+        });
+        accountCard.setOnClickListener(v ->
+                accountSwitch.setChecked(!accountSwitch.isChecked()));
+        linkedSettings.registerMultiUser(accountSwitch);
     }
 
     private static void buildGlobalCacheSetting(
@@ -377,6 +1315,44 @@ public final class ModuleSettingsHook {
         });
         cacheCard.setOnClickListener(v ->
                 cacheSwitch.setChecked(!cacheSwitch.isChecked()));
+    }
+
+    private static final class LinkedSettingsController {
+        private Switch multiUserSwitch;
+        private Switch customMacSwitch;
+        private boolean syncing;
+
+        boolean isSyncing() {
+            return syncing;
+        }
+
+        void registerMultiUser(Switch toggle) {
+            multiUserSwitch = toggle;
+        }
+
+        void registerCustomMac(Switch toggle) {
+            customMacSwitch = toggle;
+        }
+
+        void setMultiUserChecked(boolean checked) {
+            setChecked(multiUserSwitch, checked);
+        }
+
+        void setCustomMacChecked(boolean checked) {
+            setChecked(customMacSwitch, checked);
+        }
+
+        private void setChecked(Switch toggle, boolean checked) {
+            if (toggle == null || toggle.isChecked() == checked) {
+                return;
+            }
+            syncing = true;
+            try {
+                toggle.setChecked(checked);
+            } finally {
+                syncing = false;
+            }
+        }
     }
 
     private static final class SplashSettingsController {
@@ -536,9 +1512,13 @@ public final class ModuleSettingsHook {
                 return;
             }
             try {
-                int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
-                activity.getContentResolver()
-                        .takePersistableUriPermission(uri, flags);
+                if ((data.getFlags()
+                        & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+                    activity.getContentResolver()
+                            .takePersistableUriPermission(
+                                    uri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                }
             } catch (Throwable ignored) {
                 // 已复制到私有目录，不依赖文件提供者后续继续授权。
             }
@@ -705,7 +1685,7 @@ public final class ModuleSettingsHook {
 
         private void refreshUi(boolean hasFile, boolean enabled) {
             summary.setText(!hasFile
-                    ? "选择一张图片替换服务器开屏图；图片会安全复制到应用私有目录"
+                    ? "选择一张图片替换服务器开屏图"
                     : enabled
                     ? "已启用，将在启动时显示自定义图片"
                     : "已保存图片但当前停用，应用使用默认开屏图");
@@ -739,6 +1719,72 @@ public final class ModuleSettingsHook {
         summary.setText(disabled
                 ? "已禁止图片、WebView 与 HTTP 本地缓存；不清理登录和答题数据"
                 : "图片、网页与网络请求使用应用原有缓存策略");
+    }
+
+    private static void updateMultiUserSummary(
+            TextView summary, boolean enabled) {
+        summary.setText(enabled
+                ? "和自定义设备 MAC 联动；加密保存多组用户名、密码和 MAC"
+                : "登录页使用应用原有的单账号记忆方式；开启时会联动开启自定义 MAC");
+    }
+
+    private static void updateCompactModeSummary(
+            TextView summary, boolean enabled) {
+        summary.setText(enabled
+                ? "隐藏侧边多余条目和主页部分内容"
+                : "显示原有全部侧边入口和主页栏目");
+    }
+
+    private static void updateForceExitSummary(
+            TextView summary, boolean enabled) {
+        summary.setText(enabled
+                ? "允许退出锁屏中的课堂及禁止中途退出的作业"
+                : "遵循课堂锁屏及作业禁止中途退出的原有限制");
+    }
+
+    private static void updateSystemHomeworkPickerSummary(
+            TextView summary, boolean enabled) {
+        summary.setText(enabled
+                ? "作业上传图片时使用 Android 系统选择器"
+                : "作业上传图片时使用应用内置的相册选择器");
+    }
+
+    private static void updateLauncherIsolationSummary(
+            TextView summary, boolean enabled) {
+        summary.setText(enabled
+                ? "不识别领创管理，并拦截指向它的广播、页面、服务、绑定和 URI 授权等"
+                : "应用按原流程检测并使用领创提供的设备管理能力");
+    }
+
+    private static void updateDisplayIdentitySummary(
+            TextView summary, SharedPreferences preferences) {
+        String name = preferences.getString(KEY_DISPLAY_NAME, "").trim();
+        String number = preferences.getString(
+                KEY_DISPLAY_STUDENT_NUMBER, "").trim();
+        String school = preferences.getString(KEY_DISPLAY_SCHOOL, "").trim();
+        String grade = preferences.getString(KEY_DISPLAY_GRADE, "").trim();
+        if (name.isEmpty() && number.isEmpty()
+                && school.isEmpty() && grade.isEmpty()) {
+            summary.setText("当前显示服务器返回的真实姓名、学号、学校和年级");
+            return;
+        }
+        StringBuilder value = new StringBuilder("仅修改界面显示：");
+        appendDisplayAlias(value, "姓名", name);
+        appendDisplayAlias(value, "学号", number);
+        appendDisplayAlias(value, "学校", school);
+        appendDisplayAlias(value, "年级", grade);
+        summary.setText(value);
+    }
+
+    private static void appendDisplayAlias(
+            StringBuilder target, String label, String value) {
+        if (value.isEmpty()) {
+            return;
+        }
+        if (target.charAt(target.length() - 1) != '：') {
+            target.append("；");
+        }
+        target.append(label).append("=").append(value);
     }
 
     private static void styleSwitch(Switch toggle) {
@@ -847,6 +1893,61 @@ public final class ModuleSettingsHook {
         String message = current.getMessage();
         return message == null || message.trim().isEmpty()
                 ? current.getClass().getSimpleName() : message;
+    }
+
+    private static boolean getBoolean(Context context, String key) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(key, false);
+    }
+
+    private static void ensureLegacyDebugMigrated(Context context) {
+        if (legacyDebugMigrationChecked) {
+            return;
+        }
+        synchronized (ModuleSettingsHook.class) {
+            if (legacyDebugMigrationChecked) {
+                return;
+            }
+            SharedPreferences preferences = context.getSharedPreferences(
+                    SP_FILE, Context.MODE_PRIVATE);
+            if (preferences.getBoolean(
+                    KEY_DEBUG_FEATURES_MIGRATED, false)) {
+                if (preferences.contains(LEGACY_KEY_DEBUG_MODE)) {
+                    preferences.edit()
+                            .remove(LEGACY_KEY_DEBUG_MODE)
+                            .apply();
+                }
+                legacyDebugMigrationChecked = true;
+                return;
+            }
+
+            boolean legacyEnabled = preferences.getBoolean(
+                    LEGACY_KEY_DEBUG_MODE, false);
+            SharedPreferences.Editor editor = preferences.edit();
+            if (legacyEnabled) {
+                String[] migratedKeys = {
+                        KEY_ONE_CLICK_CORRECT,
+                        KEY_ANSWER_VIEW,
+                        KEY_LEARNING_PROJECT_OVERRIDE,
+                        KEY_PROTOCOL_OVERRIDE,
+                        KEY_DEBUG_CODE_GENERATOR,
+                        KEY_HOMEWORK_ID_DISPLAY,
+                        KEY_CUSTOM_MAC
+                };
+                for (String key : migratedKeys) {
+                    if (!preferences.contains(key)) {
+                        editor.putBoolean(key, true);
+                    }
+                }
+            }
+            boolean migrated = editor
+                    .remove(LEGACY_KEY_DEBUG_MODE)
+                    .putBoolean(KEY_DEBUG_FEATURES_MIGRATED, true)
+                    .commit();
+            legacyDebugMigrationChecked = migrated;
+            XposedBridge.log(TAG + " legacy debug settings migrated: "
+                    + migrated + ", previouslyEnabled=" + legacyEnabled);
+        }
     }
 
     private static GradientDrawable roundedBackground(

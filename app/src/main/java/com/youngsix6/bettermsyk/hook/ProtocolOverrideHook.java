@@ -1,7 +1,6 @@
 package com.youngsix6.bettermsyk.hook;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.webkit.WebView;
 
@@ -15,15 +14,13 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 调试模式下用模块内置 HTML 覆写美师优课用户服务协议。
- * 隐私政策以及非调试模式仍使用目标应用原有网络页面。
+ * 对应模块设置开启时，用模块内置 HTML 覆写美师优课用户服务协议。
+ * 追加模块使用协议
  */
 public final class ProtocolOverrideHook {
 
     private static final String TAG = "[BetterMSYK]";
     private static final String MODULE_PACKAGE = "com.youngsix6.bettermsyk";
-    private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String AGREEMENT_ASSET = "debug_user_service_agreement.html";
     private static final String SIMPLE_WEB_VIEW =
             "com.zdsoft.newsquirrel.android.customview.webview.SimpleWebView";
@@ -54,7 +51,8 @@ public final class ProtocolOverrideHook {
                             WebView webView = (WebView) param.thisObject;
                             Context context = webView.getContext();
                             String url = (String) param.args[0];
-                            if (!isDebugMode(context)
+                            if (!ModuleSettingsHook
+                                    .isServiceAgreementOverrideEnabled(context)
                                     || !isServiceAgreementUrl(url)) {
                                 return;
                             }
@@ -75,7 +73,7 @@ public final class ProtocolOverrideHook {
                             );
                             param.setResult(null);
                             XposedBridge.log(TAG
-                                    + " debug service agreement overridden");
+                                    + " service agreement overridden");
                         }
                     }
             );
@@ -88,15 +86,6 @@ public final class ProtocolOverrideHook {
 
     private static boolean isServiceAgreementUrl(String url) {
         return !TextUtils.isEmpty(url) && url.contains(SERVICE_AGREEMENT_PATH);
-    }
-
-    private static boolean isDebugMode(Context context) {
-        if (context == null) {
-            return false;
-        }
-        SharedPreferences preferences =
-                context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        return preferences.getBoolean(KEY_DEBUG_MODE, false);
     }
 
     private static String loadAgreementHtml(Context context) {

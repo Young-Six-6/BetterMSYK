@@ -1,0 +1,132 @@
+name: Android Build
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: Build variant
+        required: true
+        default: debug
+        type: choice
+        options:
+          - debug
+          - release
+          - both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Prepare Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build debug APK
+        if: >-
+          (github.event_name != 'workflow_dispatch' &&
+           !startsWith(github.ref, 'refs/tags/')) ||
+          (github.event_name == 'workflow_dispatch' &&
+           (inputs.build_type == 'debug' || inputs.build_type == 'both'))
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Upload debug APK
+        if: >-
+          (github.event_name != 'workflow_dispatch' &&
+           !startsWith(github.ref, 'refs/tags/')) ||
+          (github.event_name == 'workflow_dispatch' &&
+           (inputs.build_type == 'debug' || inputs.build_type == 'both'))
+        uses: actions/upload-artifact@v6
+        with:
+          name: BetterMSYK-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Prepare optional release signing
+        id: release_signing
+        if: >-
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.event_name == 'workflow_dispatch' &&
+           (inputs.build_type == 'release' || inputs.build_type == 'both'))
+        shell: bash
+        run: |
+          if [[ -n "$ANDROID_KEYSTORE_BASE64" &&
+                -n "$ANDROID_KEYSTORE_PASSWORD" &&
+                -n "$ANDROID_KEY_ALIAS" &&
+                -n "$ANDROID_KEY_PASSWORD" ]]; then
+            umask 077
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+              | base64 --decode > "$RUNNER_TEMP/bettermsyk-release.jks"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets detected; the release APK will be signed."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Release signing secrets are incomplete; building an unsigned release APK."
+          fi
+
+      - name: Build signed release APK
+        if: steps.release_signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          ./gradlew :app:assembleRelease \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/bettermsyk-release.jks" \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD" \
+            --stacktrace \
+            --no-daemon
+
+      - name: Build unsigned release APK
+        if: steps.release_signing.outputs.enabled == 'false'
+        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Upload release APK
+        if: >-
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.event_name == 'workflow_dispatch' &&
+           (inputs.build_type == 'release' || inputs.build_type == 'both'))
+        uses: actions/upload-artifact@v6
+        with:
+          name: BetterMSYK-release-${{ github.run_number }}
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30

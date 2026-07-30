@@ -2,7 +2,6 @@ package com.youngsix6.bettermsyk.hook;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -41,9 +40,6 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class HomeworkDebugHook {
 
     private static final String TAG = "[BetterMSYK]";
-    private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
-    private static final String KEY_VOLUME_TRIGGER = "isVolumeTriggerEnabled";
     private static final String TARGET_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.student.homework.detail.dtk.StudentDtkHwDetailActivity";
     private static final String HW_ANSWER_MANAGER =
@@ -146,12 +142,13 @@ public final class HomeworkDebugHook {
         View buttonView = activity.getWindow()
                 .getDecorView()
                 .findViewWithTag(BUTTON_TAG);
-        boolean isDebugMode = isDebugMode(activity);
-        if (!isDebugMode) {
+        boolean oneClickEnabled =
+                ModuleSettingsHook.isOneClickCorrectEnabled(activity);
+        if (!oneClickEnabled) {
             if (buttonView != null) {
                 buttonView.setVisibility(View.GONE);
             }
-            log(activity, "debug mode off, hide one-click button");
+            log(activity, "one-click setting off, hide button");
             return;
         }
 
@@ -255,8 +252,7 @@ public final class HomeworkDebugHook {
     }
 
     private static boolean isVolumeTriggerEnabled(Context context) {
-        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
-                .getBoolean(KEY_VOLUME_TRIGGER, false);
+        return ModuleSettingsHook.isVolumeTriggerEnabled(context);
     }
 
     private static int recordVolumeDownPress(Activity activity) {
@@ -710,11 +706,6 @@ public final class HomeworkDebugHook {
         } catch (Throwable ignored) {
             return 0D;
         }
-    }
-
-    private static boolean isDebugMode(Context context) {
-        SharedPreferences sp = context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        return sp.getBoolean(KEY_DEBUG_MODE, false);
     }
 
     private static void toast(Activity activity, String message) {

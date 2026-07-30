@@ -25,9 +25,8 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 按模块设置动态禁用图片、WebView 与 HTTP 本地缓存。
- * 该功能不操作数据库、SharedPreferences、Cookie 或 filesDir，
- * 避免影响登录态、答题进度及离线业务文件。
+ * 按模块设置禁用图片、WebView 与 HTTP 本地缓存。
+ * 不影响登录、答题进度及离线业务文件。
  */
 public final class CacheControlHook {
 

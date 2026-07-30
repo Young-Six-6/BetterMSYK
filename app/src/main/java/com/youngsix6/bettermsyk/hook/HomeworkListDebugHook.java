@@ -1,7 +1,6 @@
 package com.youngsix6.bettermsyk.hook;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.view.View;
 import android.widget.TextView;
 
@@ -13,13 +12,11 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 调试模式下在学生作业列表的灰色辅助信息中显示作业 ID。
+ * 在作业列表显示作业 ID。
  */
 public final class HomeworkListDebugHook {
 
     private static final String TAG = "[BetterMSYK]";
-    private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String STUDENT_HOMEWORK_LIST_FIELD = "studentHomeWorkList";
     private static final String HOMEWORK_ID_PREFIX = "  id:";
 
@@ -87,7 +84,7 @@ public final class HomeworkListDebugHook {
             int position = (Integer) param.args[1];
             View itemView = (View) XposedHelpers.getObjectField(holder, "itemView");
             Context context = itemView.getContext();
-            if (!isDebugMode(context)) {
+            if (!ModuleSettingsHook.isHomeworkIdDisplayEnabled(context)) {
                 return;
             }
 
@@ -157,9 +154,4 @@ public final class HomeworkListDebugHook {
         view.setText(original + HOMEWORK_ID_PREFIX + homeworkId);
     }
 
-    private static boolean isDebugMode(Context context) {
-        SharedPreferences sp =
-                context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        return sp.getBoolean(KEY_DEBUG_MODE, false);
-    }
 }

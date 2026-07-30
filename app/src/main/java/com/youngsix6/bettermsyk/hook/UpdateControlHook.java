@@ -9,7 +9,7 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 按“关闭更新”设置阻断启动版本检查、更新提示、APK/Tinker 下载，
+ * 按需要阻断启动版本检查、更新提示、APK 下载，
  * 并启用原 App 自带的 isJumpUpdate 标志避免通知服务触发强制退出。
  */
 public final class UpdateControlHook {

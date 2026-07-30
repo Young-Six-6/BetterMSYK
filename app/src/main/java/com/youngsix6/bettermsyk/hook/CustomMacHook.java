@@ -25,13 +25,12 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 调试模式下允许在登录页设置测试 MAC，并替换应用自身的 MAC 获取结果。
+ * 自定义设备 MAC
  */
 public final class CustomMacHook {
 
     private static final String TAG = "[BetterMSYK]";
     private static final String SP_FILE = "system_properties";
-    private static final String KEY_DEBUG_MODE = "isDebugMode";
     private static final String KEY_CUSTOM_MAC = "debugCustomMac";
     private static final String LOGIN_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.LoginActivity";
@@ -93,7 +92,10 @@ public final class CustomMacHook {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             Activity activity = (Activity) param.thisObject;
-                            if (isDebugMode(activity)) {
+                            if (ModuleSettingsHook
+                                    .isCustomMacInputEnabled(activity)
+                                    || ModuleSettingsHook
+                                    .isMultiUserLoginEnabled(activity)) {
                                 injectCustomMacInput(activity);
                             }
                         }
@@ -365,15 +367,46 @@ public final class CustomMacHook {
         return divider;
     }
 
-    private static String getEnabledCustomMac(Context context) {
-        if (context == null || !isDebugMode(context)) {
+    static String getEnabledCustomMac(Context context) {
+        if (context == null) {
             return null;
         }
-        String stored = getPreferences(context).getString(KEY_CUSTOM_MAC, "");
-        return normalizeMac(stored);
+        if (ModuleSettingsHook.isCustomMacInputEnabled(context)
+                || ModuleSettingsHook
+                .isMultiUserLoginEnabled(context)) {
+            String stored = getPreferences(context)
+                    .getString(KEY_CUSTOM_MAC, "");
+            String debugMac = normalizeMac(stored);
+            if (debugMac != null) {
+                return debugMac;
+            }
+        }
+        return MultiUserLoginHook.getSelectedProfileMac(context);
     }
 
-    private static String normalizeMac(String value) {
+    static void setLoginMacInput(Activity activity, String mac) {
+        if (activity == null) {
+            return;
+        }
+        View view = activity.getWindow().getDecorView()
+                .findViewWithTag(INPUT_TAG);
+        if (!(view instanceof ViewGroup)) {
+            return;
+        }
+        ViewGroup row = (ViewGroup) view;
+        for (int index = 0; index < row.getChildCount(); index++) {
+            View child = row.getChildAt(index);
+            if (child instanceof EditText) {
+                EditText input = (EditText) child;
+                String value = mac == null ? "" : mac;
+                input.setText(value);
+                input.setSelection(input.length());
+                return;
+            }
+        }
+    }
+
+    static String normalizeMac(String value) {
         if (value == null) {
             return null;
         }
@@ -406,7 +439,4 @@ public final class CustomMacHook {
         return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
     }
 
-    private static boolean isDebugMode(Context context) {
-        return getPreferences(context).getBoolean(KEY_DEBUG_MODE, false);
-    }
 }
