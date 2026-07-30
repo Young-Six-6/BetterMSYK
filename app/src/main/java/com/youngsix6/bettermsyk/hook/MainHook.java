@@ -23,11 +23,11 @@ public class MainHook implements IXposedHookLoadPackage {
         }
         hooksInitialized = true;
 
-        de.robv.android.xposed.XposedBridge.log(
+        ModuleLog.log(
             "[BetterMSYK] handleLoadPackage target: " + lpparam.packageName
                     + " / " + lpparam.processName
         );
-        de.robv.android.xposed.XposedBridge.log(
+        ModuleLog.log(
             "[BetterMSYK] MainHook: matched target, initializing hooks..."
         );
 
@@ -40,6 +40,7 @@ public class MainHook implements IXposedHookLoadPackage {
         MultiUserLoginHook.init(lpparam);
         ProtocolOverrideHook.init(lpparam);
         AboutDebugCodeHook.init(lpparam);
+        ModuleLogHook.init(lpparam);
         SettingsHook.init(lpparam);
         LearningProjectCfgHook.init(lpparam);
         AnswerViewDebugHook.init(lpparam);

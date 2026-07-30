@@ -59,9 +59,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-
 /**
  * OSS_Plus Android 图形化实现。（原脚本参github）
  */
@@ -205,9 +202,9 @@ final class OssMaterialTool {
             leftContent.addView(heading);
 
             TextView intro = text(
-                    "使用当前登录账号读取作业文件，先删除目标 OSS 对象，"
-                            + "再以相同 OSS Key 上传新文件。"
-                            + "替换不会修改作业数据库记录，请确认目标无误。",
+                    "使用当前登录账号读取作业文件，先删除目标对象，"
+                            + "再使用新文件替换到原位置。"
+                            + "操作不可逆请确认目标无误。",
                     13, Color.parseColor("#536158"));
             LinearLayout.LayoutParams introLp = matchWrapLp();
             introLp.topMargin = dp(6);
@@ -1084,15 +1081,15 @@ final class OssMaterialTool {
     }
 
     private static Session currentSession(ClassLoader classLoader) {
-        Class<?> appClass = XposedHelpers.findClass(APP_CLASS, classLoader);
-        Object loginUser = XposedHelpers.callStaticMethod(appClass, "getLoginUser");
+        Class<?> appClass = CompatReflect.findClass(APP_CLASS, classLoader);
+        Object loginUser = CompatReflect.callStaticMethod(appClass, "getLoginUser");
         if (loginUser == null) {
             throw new IllegalStateException("当前没有登录用户");
         }
-        String userId = valueOf(XposedHelpers.callMethod(loginUser, "getLoginUserId"));
-        String unitId = valueOf(XposedHelpers.callMethod(loginUser, "getUnitId"));
-        String realName = valueOf(XposedHelpers.callMethod(loginUser, "getRealName"));
-        String sign = valueOf(XposedHelpers.getStaticObjectField(appClass, "sign"));
+        String userId = valueOf(CompatReflect.callMethod(loginUser, "getLoginUserId"));
+        String unitId = valueOf(CompatReflect.callMethod(loginUser, "getUnitId"));
+        String realName = valueOf(CompatReflect.callMethod(loginUser, "getRealName"));
+        String sign = valueOf(CompatReflect.getStaticField(appClass, "sign"));
         if (userId.isEmpty() || unitId.isEmpty() || sign.isEmpty()) {
             throw new IllegalStateException("当前登录态缺少 userId、unitId 或 sign");
         }
@@ -1389,26 +1386,26 @@ final class OssMaterialTool {
             List<String> prefixes) throws Exception {
         JSONObject sts = fetchSts(classLoader, false);
         Object client = makeOssClient(activity, classLoader, sts);
-        Class<?> requestClass = XposedHelpers.findClass(
+        Class<?> requestClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.model.ListObjectsRequest", classLoader);
         List<ImageItem> result = new ArrayList<>();
         for (String prefix : prefixes) {
-            Object request = XposedHelpers.newInstance(requestClass);
-            XposedHelpers.callMethod(request, "setBucketName", OSS_BUCKET);
-            XposedHelpers.callMethod(request, "setPrefix", prefix);
-            XposedHelpers.callMethod(request, "setMaxKeys", Integer.valueOf(1000));
-            Object response = XposedHelpers.callMethod(client, "listObjects", request);
-            int status = ((Number) XposedHelpers.callMethod(
+            Object request = CompatReflect.newInstance(requestClass);
+            CompatReflect.callMethod(request, "setBucketName", OSS_BUCKET);
+            CompatReflect.callMethod(request, "setPrefix", prefix);
+            CompatReflect.callMethod(request, "setMaxKeys", Integer.valueOf(1000));
+            Object response = CompatReflect.callMethod(client, "listObjects", request);
+            int status = ((Number) CompatReflect.callMethod(
                     response, "getStatusCode")).intValue();
             if (status != 200) {
                 continue;
             }
-            Object summaries = XposedHelpers.callMethod(response, "getObjectSummaries");
+            Object summaries = CompatReflect.callMethod(response, "getObjectSummaries");
             if (!(summaries instanceof List<?>)) {
                 continue;
             }
             for (Object summary : (List<?>) summaries) {
-                String key = valueOf(XposedHelpers.callMethod(summary, "getKey"));
+                String key = valueOf(CompatReflect.callMethod(summary, "getKey"));
                 if (!isSupportedFile(key)) {
                     continue;
                 }
@@ -1447,20 +1444,20 @@ final class OssMaterialTool {
         JSONObject sts = fetchSts(classLoader, mode == MODE_STUDENT);
         Object client = makeOssClient(activity, classLoader, sts);
 
-        Class<?> deleteClass = XposedHelpers.findClass(
+        Class<?> deleteClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.model.DeleteObjectRequest",
                 classLoader);
-        Object deleteRequest = XposedHelpers.newInstance(
+        Object deleteRequest = CompatReflect.newInstance(
                 deleteClass, OSS_BUCKET, item.ossKey);
         Object deleteResult;
         try {
-            deleteResult = XposedHelpers.callMethod(
+            deleteResult = CompatReflect.callMethod(
                     client, "deleteObject", deleteRequest);
         } catch (Throwable t) {
             throw new IllegalStateException(
                     "删除原对象失败，未执行上传：" + friendly(t));
         }
-        int deleteStatus = ((Number) XposedHelpers.callMethod(
+        int deleteStatus = ((Number) CompatReflect.callMethod(
                 deleteResult, "getStatusCode")).intValue();
         if (deleteStatus != 200 && deleteStatus != 204) {
             throw new IllegalStateException(
@@ -1468,28 +1465,28 @@ final class OssMaterialTool {
                             + requestIdSuffix(deleteResult));
         }
 
-        Class<?> metadataClass = XposedHelpers.findClass(
+        Class<?> metadataClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.model.ObjectMetadata", classLoader);
-        Object metadata = XposedHelpers.newInstance(metadataClass);
-        XposedHelpers.callMethod(metadata, "setContentType",
+        Object metadata = CompatReflect.newInstance(metadataClass);
+        CompatReflect.callMethod(metadata, "setContentType",
                 mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
-        XposedHelpers.callMethod(metadata, "setCacheControl",
+        CompatReflect.callMethod(metadata, "setCacheControl",
                 "no-cache, no-store, must-revalidate");
-        XposedHelpers.callMethod(metadata, "setExpirationTime", new Date(0));
+        CompatReflect.callMethod(metadata, "setExpirationTime", new Date(0));
 
-        Class<?> putClass = XposedHelpers.findClass(
+        Class<?> putClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.model.PutObjectRequest", classLoader);
-        Object putRequest = XposedHelpers.newInstance(
+        Object putRequest = CompatReflect.newInstance(
                 putClass, OSS_BUCKET, item.ossKey, bytes, metadata);
 
         Object putResult;
         try {
-            putResult = XposedHelpers.callMethod(client, "putObject", putRequest);
+            putResult = CompatReflect.callMethod(client, "putObject", putRequest);
         } catch (Throwable t) {
             throw new IllegalStateException(
                     "原对象已删除，但上传失败：" + friendly(t));
         }
-        int putStatus = ((Number) XposedHelpers.callMethod(
+        int putStatus = ((Number) CompatReflect.callMethod(
                 putResult, "getStatusCode")).intValue();
         if (putStatus != 200) {
             throw new IllegalStateException(
@@ -1498,17 +1495,17 @@ final class OssMaterialTool {
         }
 
         String localDigest = sha256(bytes);
-        Class<?> getClass = XposedHelpers.findClass(
+        Class<?> getClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.model.GetObjectRequest", classLoader);
-        Object getRequest = XposedHelpers.newInstance(getClass, OSS_BUCKET, item.ossKey);
-        Object getResult = XposedHelpers.callMethod(client, "getObject", getRequest);
-        int getStatus = ((Number) XposedHelpers.callMethod(
+        Object getRequest = CompatReflect.newInstance(getClass, OSS_BUCKET, item.ossKey);
+        Object getResult = CompatReflect.callMethod(client, "getObject", getRequest);
+        int getStatus = ((Number) CompatReflect.callMethod(
                 getResult, "getStatusCode")).intValue();
         if (getStatus != 200) {
             throw new IllegalStateException("上传后源站读取返回 HTTP " + getStatus);
         }
         byte[] remoteBytes;
-        try (InputStream in = (InputStream) XposedHelpers.callMethod(
+        try (InputStream in = (InputStream) CompatReflect.callMethod(
                 getResult, "getObjectContent")) {
             remoteBytes = readFully(in,
                     Math.max(MAX_LOCAL_FILE_BYTES, bytes.length + 1024 * 1024));
@@ -1529,7 +1526,7 @@ final class OssMaterialTool {
     private static String requestIdSuffix(Object result) {
         try {
             String requestId = valueOf(
-                    XposedHelpers.callMethod(result, "getRequestId"));
+                    CompatReflect.callMethod(result, "getRequestId"));
             return requestId.isEmpty() ? "" : "，requestId=" + requestId;
         } catch (Throwable ignored) {
             return "";
@@ -1558,25 +1555,25 @@ final class OssMaterialTool {
 
     private static Object makeOssClient(
             Activity activity, ClassLoader classLoader, JSONObject sts) {
-        Class<?> providerClass = XposedHelpers.findClass(
+        Class<?> providerClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.common.auth.OSSStsTokenCredentialProvider",
                 classLoader);
-        Object provider = XposedHelpers.newInstance(providerClass,
+        Object provider = CompatReflect.newInstance(providerClass,
                 sts.optString("AccessKeyId"),
                 sts.optString("AccessKeySecret"),
                 sts.optString("SecurityToken"));
 
-        Class<?> configClass = XposedHelpers.findClass(
+        Class<?> configClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.ClientConfiguration", classLoader);
-        Object config = XposedHelpers.newInstance(configClass);
-        XposedHelpers.callMethod(config, "setConnectionTimeout", 30000);
-        XposedHelpers.callMethod(config, "setSocketTimeout", 60000);
-        XposedHelpers.callMethod(config, "setMaxErrorRetry", 2);
-        XposedHelpers.callMethod(config, "setHttpDnsEnable", false);
+        Object config = CompatReflect.newInstance(configClass);
+        CompatReflect.callMethod(config, "setConnectionTimeout", 30000);
+        CompatReflect.callMethod(config, "setSocketTimeout", 60000);
+        CompatReflect.callMethod(config, "setMaxErrorRetry", 2);
+        CompatReflect.callMethod(config, "setHttpDnsEnable", false);
 
-        Class<?> clientClass = XposedHelpers.findClass(
+        Class<?> clientClass = CompatReflect.findClass(
                 "com.alibaba.sdk.android.oss.OSSClient", classLoader);
-        return XposedHelpers.newInstance(clientClass,
+        return CompatReflect.newInstance(clientClass,
                 activity.getApplicationContext(), OSS_ENDPOINT, provider, config);
     }
 
@@ -1608,8 +1605,8 @@ final class OssMaterialTool {
 
     private static String serverOrigin(ClassLoader classLoader) {
         try {
-            Class<?> constants = XposedHelpers.findClass(URL_CONSTANTS_CLASS, classLoader);
-            String value = valueOf(XposedHelpers.getStaticObjectField(
+            Class<?> constants = CompatReflect.findClass(URL_CONSTANTS_CLASS, classLoader);
+            String value = valueOf(CompatReflect.getStaticField(
                     constants, "SERVER_HOMEWORK_URL"));
             while (value.endsWith("/")) {
                 value = value.substring(0, value.length() - 1);
@@ -2340,7 +2337,7 @@ final class OssMaterialTool {
     }
 
     private static void logFailure(String action, Throwable throwable) {
-        XposedBridge.log(TAG + " OSS ToolKit " + action + " failed: "
+        ModuleLog.log(TAG + " OSS ToolKit " + action + " failed: "
                 + friendly(throwable));
     }
 

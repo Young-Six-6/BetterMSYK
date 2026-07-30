@@ -10,7 +10,6 @@ import java.util.WeakHashMap;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -38,17 +37,17 @@ public final class ForceExitHook {
         hookHomeworkPresenter(lpparam, HOMEWORK_PRESENTER);
         hookHomeworkPresenter(lpparam, DTK_HOMEWORK_PRESENTER);
         hookLocalClassExit(lpparam);
-        XposedBridge.log(TAG + " ForceExitHook registered.");
+        ModuleLog.log(TAG + " ForceExitHook registered.");
     }
 
     private static void hookHomeworkPresenter(
             XC_LoadPackage.LoadPackageParam lpparam, String className) {
         try {
             Class<?> presenterClass =
-                    XposedHelpers.findClass(className, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    presenterClass,
-                    "handleBack",
+                    CompatReflect.findClass(className, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            presenterClass, "handleBack"),
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -57,20 +56,23 @@ public final class ForceExitHook {
                                     || !ModuleSettingsHook.isForceExitEnabled(activity)) {
                                 return;
                             }
-                            int original = XposedHelpers.getIntField(
+                            int original = CompatReflect.getIntField(
                                     param.thisObject, "isAnswerBack");
                             if (original == 0) {
                                 return;
                             }
                             try {
-                                XposedHelpers.callMethod(
+                                CompatReflect.callMethod(
                                         param.thisObject, "lockScreen", false);
                             } catch (Throwable t) {
                                 logFailure("unlock homework screen", t);
                             }
                             ORIGINAL_ANSWER_BACK.put(param.thisObject, original);
-                            XposedHelpers.setIntField(
+                            CompatReflect.setIntField(
                                     param.thisObject, "isAnswerBack", 0);
+                            ModuleLog.log(TAG
+                                    + " homework exit restriction bypassed: "
+                                    + param.thisObject.getClass().getSimpleName());
                         }
 
                         @Override
@@ -78,7 +80,7 @@ public final class ForceExitHook {
                             Integer original =
                                     ORIGINAL_ANSWER_BACK.remove(param.thisObject);
                             if (original != null) {
-                                XposedHelpers.setIntField(
+                                CompatReflect.setIntField(
                                         param.thisObject,
                                         "isAnswerBack",
                                         original);
@@ -93,11 +95,11 @@ public final class ForceExitHook {
     private static void hookLocalClassExit(
             XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> activityClass = XposedHelpers.findClass(
+            Class<?> activityClass = CompatReflect.findClass(
                     LOCAL_CLASS_ACTIVITY, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "showDepartClassPopupWindow",
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "showDepartClassPopupWindow"),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -115,11 +117,11 @@ public final class ForceExitHook {
 
     private static Activity presenterActivity(Object presenter) {
         try {
-            Object view = XposedHelpers.callMethod(presenter, "getView");
+            Object view = CompatReflect.callMethod(presenter, "getView");
             if (view == null) {
                 return null;
             }
-            Object activity = XposedHelpers.callMethod(view, "getSelfActivity");
+            Object activity = CompatReflect.callMethod(view, "getSelfActivity");
             return activity instanceof Activity ? (Activity) activity : null;
         } catch (Throwable t) {
             logFailure("resolve homework activity", t);
@@ -130,7 +132,7 @@ public final class ForceExitHook {
     private static void replaceClassExitListener(Activity activity) {
         try {
             Object popupObject =
-                    XposedHelpers.getObjectField(activity, "mPopupWindow");
+                    CompatReflect.getField(activity, "mPopupWindow");
             if (!(popupObject instanceof PopupWindow)) {
                 return;
             }
@@ -148,21 +150,23 @@ public final class ForceExitHook {
             exitButton.setOnClickListener(v -> {
                 try {
                     popup.dismiss();
-                    XposedHelpers.callMethod(activity, "allowScreen");
-                    XposedHelpers.callMethod(activity, "setFeedBackId");
-                    XposedHelpers.callMethod(activity, "studentLoginOutClass");
-                    XposedHelpers.callMethod(activity, "toFinish");
+                    CompatReflect.callMethod(activity, "allowScreen");
+                    CompatReflect.callMethod(activity, "setFeedBackId");
+                    CompatReflect.callMethod(activity, "studentLoginOutClass");
+                    CompatReflect.callMethod(activity, "toFinish");
                 } catch (Throwable t) {
                     logFailure("force class exit", t);
                 }
             });
+            ModuleLog.log(TAG
+                    + " classroom exit listener replaced");
         } catch (Throwable t) {
             logFailure("replace class exit listener", t);
         }
     }
 
     private static void logFailure(String operation, Throwable t) {
-        XposedBridge.log(TAG + " " + operation + " failed: "
+        ModuleLog.log(TAG + " " + operation + " failed: "
                 + t.getClass().getSimpleName() + ": " + t.getMessage());
     }
 }

@@ -225,7 +225,7 @@ public final class CompactModeHook {
     }
 
     private static void logFailure(String operation, Throwable t) {
-        XposedBridge.log(TAG + " " + operation + " failed: "
+        ModuleLog.log(TAG + " " + operation + " failed: "
                 + t.getClass().getSimpleName() + ": " + t.getMessage());
     }
 

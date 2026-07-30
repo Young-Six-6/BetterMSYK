@@ -869,7 +869,7 @@ public final class MultiUserLoginHook {
         if (!LOGGED_FAILURES.add(action)) {
             return;
         }
-        XposedBridge.log(TAG + " " + action + " failed: "
+        ModuleLog.log(TAG + " " + action + " failed: "
                 + throwable.getClass().getSimpleName()
                 + ": " + throwable.getMessage());
     }

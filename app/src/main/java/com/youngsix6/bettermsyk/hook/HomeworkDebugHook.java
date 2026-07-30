@@ -713,7 +713,7 @@ public final class HomeworkDebugHook {
     }
 
     private static void log(Context context, String message) {
-        XposedBridge.log(TAG + " " + message);
+        ModuleLog.log(TAG + " " + message);
     }
 
     private static int safeDimen(Resources res, int resId, int fallbackPx) {

@@ -96,7 +96,7 @@ public final class CacheControlHook {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                Object application = XposedHelpers.callMethod(
+                                Object application = CompatReflect.callMethod(
                                         param.thisObject, "getApplication");
                                 if (application instanceof Context) {
                                     Context context = (Context) application;
@@ -205,11 +205,11 @@ public final class CacheControlHook {
                     fields | 4 | 256);
         } catch (Throwable directFieldFailure) {
             try {
-                Object configured = XposedHelpers.callMethod(
+                Object configured = CompatReflect.callMethod(
                         requestBuilder,
                         "diskCacheStrategy",
                         glideDiskCacheNone);
-                XposedHelpers.callMethod(
+                CompatReflect.callMethod(
                         configured == null ? requestBuilder : configured,
                         "skipMemoryCache",
                         true);
@@ -237,10 +237,10 @@ public final class CacheControlHook {
                                 return;
                             }
                             try {
-                                XposedHelpers.callMethod(
+                                CompatReflect.callMethod(
                                         param.thisObject,
                                         "disableDiskCache");
-                                XposedHelpers.callMethod(
+                                CompatReflect.callMethod(
                                         param.thisObject,
                                         "disableMemoryCache");
                             } catch (Throwable t) {
@@ -331,7 +331,7 @@ public final class CacheControlHook {
     }
 
     private static Object taskForResult(Object value) {
-        return XposedHelpers.callStaticMethod(
+        return CompatReflect.callStaticMethodExact(
                 boltsTaskClass,
                 "forResult",
                 new Class<?>[]{Object.class},
@@ -354,12 +354,12 @@ public final class CacheControlHook {
                                 return;
                             }
                             try {
-                                XposedHelpers.callMethod(
+                                CompatReflect.callMethod(
                                         param.thisObject,
                                         "header",
                                         "Cache-Control",
                                         "no-cache, no-store, max-age=0");
-                                XposedHelpers.callMethod(
+                                CompatReflect.callMethod(
                                         param.thisObject,
                                         "header",
                                         "Pragma",
@@ -588,9 +588,9 @@ public final class CacheControlHook {
             Class<?> frescoClass = XposedHelpers.findClass(
                     "com.facebook.drawee.backends.pipeline.Fresco",
                     loader);
-            Object pipeline = XposedHelpers.callStaticMethod(
+            Object pipeline = CompatReflect.callStaticMethod(
                     frescoClass, "getImagePipeline");
-            XposedHelpers.callMethod(pipeline, "clearCaches");
+            CompatReflect.callMethod(pipeline, "clearCaches");
         } catch (Throwable t) {
             logFailure("Fresco cache clear", t);
         }
@@ -600,7 +600,7 @@ public final class CacheControlHook {
         Runnable clearMemory = () -> {
             try {
                 Object glide = getGlide(context);
-                XposedHelpers.callMethod(glide, "clearMemory");
+                CompatReflect.callMethod(glide, "clearMemory");
             } catch (Throwable t) {
                 logFailure("Glide memory cache clear", t);
             }
@@ -613,7 +613,7 @@ public final class CacheControlHook {
         CACHE_EXECUTOR.execute(() -> {
             try {
                 Object glide = getGlide(context);
-                XposedHelpers.callMethod(glide, "clearDiskCache");
+                CompatReflect.callMethod(glide, "clearDiskCache");
             } catch (Throwable t) {
                 logFailure("Glide disk cache clear", t);
             }
@@ -624,7 +624,7 @@ public final class CacheControlHook {
         Class<?> glideClass = XposedHelpers.findClass(
                 "com.bumptech.glide.Glide",
                 context.getClassLoader());
-        return XposedHelpers.callStaticMethod(
+        return CompatReflect.callStaticMethod(
                 glideClass, "get", context);
     }
 
@@ -658,7 +658,7 @@ public final class CacheControlHook {
         if (!LOGGED_FAILURES.add(action)) {
             return;
         }
-        XposedBridge.log(TAG + " " + action + " failed: "
+        ModuleLog.log(TAG + " " + action + " failed: "
                 + throwable.getClass().getSimpleName() + ": "
                 + throwable.getMessage());
     }

@@ -466,6 +466,6 @@ public final class AnswerViewDebugHook {
     }
 
     private static void log(Context context, String message) {
-        XposedBridge.log(TAG + " " + message);
+        ModuleLog.log(TAG + " " + message);
     }
 }

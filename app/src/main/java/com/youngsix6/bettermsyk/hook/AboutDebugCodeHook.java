@@ -6,10 +6,12 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -19,7 +21,6 @@ import java.util.Locale;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -31,6 +32,8 @@ public final class AboutDebugCodeHook {
     private static final String TARGET_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.teacher.AboutMsykActivity";
     private static final String BUTTON_TAG = "bettermsyk_generate_debug_codes";
+    private static final String SCROLL_TAG =
+            "bettermsyk_about_content_scroll";
     private static final int VALID_SECONDS = 3600;
     private static final int SEARCH_SECONDS = 300;
     private static final int[] MAPPING = {6, 7, 8, 9, 10, 1, 0, 3, 2, 5, 4};
@@ -41,11 +44,10 @@ public final class AboutDebugCodeHook {
     public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> activityClass =
-                    XposedHelpers.findClass(TARGET_ACTIVITY, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onCreate",
-                    Bundle.class,
+                    CompatReflect.findClass(TARGET_ACTIVITY, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onCreate", Bundle.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -83,7 +85,8 @@ public final class AboutDebugCodeHook {
 
             LinearLayout privacyRow = (LinearLayout) privacyView;
             LinearLayout parent = (LinearLayout) privacyRow.getParent();
-            LinearLayout codeRow = cloneActionRow(activity, privacyRow);
+            LinearLayout codeRow = cloneActionRow(
+                    activity, privacyRow, "生成调试编码");
             if (codeRow == null) {
                 XposedBridge.log(TAG + " unable to clone privacy row");
                 return;
@@ -109,6 +112,7 @@ public final class AboutDebugCodeHook {
                     parent.addView(divider, insertIndex + 1);
                 }
             }
+            ensureAboutPageScrollable(activity);
             XposedBridge.log(TAG + " debug code button injected");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " inject debug code button failed: "
@@ -116,9 +120,10 @@ public final class AboutDebugCodeHook {
         }
     }
 
-    private static LinearLayout cloneActionRow(
+    static LinearLayout cloneActionRow(
             Activity activity,
-            LinearLayout source
+            LinearLayout source,
+            String labelText
     ) {
         TextView sourceLabel = null;
         ImageView sourceArrow = null;
@@ -152,7 +157,7 @@ public final class AboutDebugCodeHook {
                         sourceRowParams.width, sourceRowParams.height));
 
         TextView label = new TextView(activity);
-        label.setText("生成调试编码");
+        label.setText(labelText);
         label.setTextSize(
                 android.util.TypedValue.COMPLEX_UNIT_PX,
                 sourceLabel.getTextSize()
@@ -197,7 +202,7 @@ public final class AboutDebugCodeHook {
         return row;
     }
 
-    private static boolean isDividerView(View view) {
+    static boolean isDividerView(View view) {
         if (view == null || view instanceof ViewGroup) {
             return false;
         }
@@ -205,7 +210,7 @@ public final class AboutDebugCodeHook {
         return params != null && params.height > 0;
     }
 
-    private static View cloneDivider(Activity activity, View source) {
+    static View cloneDivider(Activity activity, View source) {
         ViewGroup.LayoutParams sourceParams = source.getLayoutParams();
         if (sourceParams == null) {
             return null;
@@ -218,6 +223,55 @@ public final class AboutDebugCodeHook {
                 : new LinearLayout.LayoutParams(
                         sourceParams.width, sourceParams.height));
         return divider;
+    }
+
+    /**
+     * 保留原生标题栏，将关于页其余内容放进滚动区域，避免模块入口超出横屏。
+     */
+    static void ensureAboutPageScrollable(Activity activity) {
+        View content = activity.findViewById(android.R.id.content);
+        if (!(content instanceof ViewGroup)
+                || ((ViewGroup) content).getChildCount() == 0
+                || !(((ViewGroup) content).getChildAt(0)
+                instanceof LinearLayout)) {
+            return;
+        }
+        LinearLayout root =
+                (LinearLayout) ((ViewGroup) content).getChildAt(0);
+        if (root.findViewWithTag(SCROLL_TAG) != null
+                || root.getChildCount() <= 2) {
+            return;
+        }
+
+        List<View> movable = new ArrayList<>();
+        while (root.getChildCount() > 2) {
+            View child = root.getChildAt(2);
+            root.removeViewAt(2);
+            movable.add(child);
+        }
+
+        LinearLayout scrollContent = new LinearLayout(activity);
+        scrollContent.setOrientation(LinearLayout.VERTICAL);
+        scrollContent.setGravity(Gravity.CENTER_HORIZONTAL);
+        scrollContent.setBackgroundColor(
+                android.graphics.Color.WHITE);
+
+        ScrollView scrollView = new ScrollView(activity);
+        scrollView.setTag(SCROLL_TAG);
+        scrollView.setFillViewport(true);
+        scrollView.setClipToPadding(false);
+        scrollView.addView(scrollContent,
+                new ScrollView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(scrollView, 2,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        0, 1f));
+
+        for (View child : movable) {
+            scrollContent.addView(child);
+        }
     }
 
     private static Drawable cloneDrawable(Activity activity, Drawable source) {

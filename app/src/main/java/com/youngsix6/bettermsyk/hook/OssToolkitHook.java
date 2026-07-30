@@ -6,10 +6,10 @@ import android.graphics.Color;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -27,11 +27,11 @@ public final class OssToolkitHook {
     public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> activityClass =
-                    XposedHelpers.findClass(ABOUT_ACTIVITY, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onCreate",
-                    android.os.Bundle.class,
+                    CompatReflect.findClass(ABOUT_ACTIVITY, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onCreate",
+                            android.os.Bundle.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -45,14 +45,12 @@ public final class OssToolkitHook {
                         }
                     }
             );
-            Class<?> fragmentActivityClass = XposedHelpers.findClass(
+            Class<?> fragmentActivityClass = CompatReflect.findClass(
                     "androidx.fragment.app.FragmentActivity", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    fragmentActivityClass,
-                    "onActivityResult",
-                    int.class,
-                    int.class,
-                    Intent.class,
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            fragmentActivityClass, "onActivityResult",
+                            int.class, int.class, Intent.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -68,9 +66,9 @@ public final class OssToolkitHook {
                         }
                     }
             );
-            XposedHelpers.findAndHookMethod(
-                    fragmentActivityClass,
-                    "onDestroy",
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            fragmentActivityClass, "onDestroy"),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -80,9 +78,9 @@ public final class OssToolkitHook {
                         }
                     }
             );
-            XposedBridge.log(TAG + " OssToolkitHook registered.");
+            ModuleLog.log(TAG + " OssToolkitHook registered.");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " OssToolkitHook init failed: "
+            ModuleLog.log(TAG + " OssToolkitHook init failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
@@ -92,15 +90,15 @@ public final class OssToolkitHook {
             int titleId = activity.getResources().getIdentifier(
                     "common_title", "id", activity.getPackageName());
             View title = titleId == 0 ? null : activity.findViewById(titleId);
-            if (title != null) {
-                XposedHelpers.callMethod(title, "setText", "OSS ToolKit");
+            if (title instanceof TextView) {
+                ((TextView) title).setText("OSS ToolKit");
             }
 
             View content = activity.findViewById(android.R.id.content);
             if (!(content instanceof ViewGroup)
                     || ((ViewGroup) content).getChildCount() == 0
                     || !(((ViewGroup) content).getChildAt(0) instanceof ViewGroup)) {
-                XposedBridge.log(TAG + " OSS ToolKit root view missing");
+                ModuleLog.log(TAG + " OSS ToolKit root view missing");
                 return;
             }
 
@@ -118,9 +116,9 @@ public final class OssToolkitHook {
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
             pageRoot.addView(toolboxContainer, containerLp);
             OssMaterialTool.attach(activity, toolboxContainer, activity.getClassLoader());
-            XposedBridge.log(TAG + " OSS ToolKit page initialized");
+            ModuleLog.log(TAG + " OSS ToolKit page initialized");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " OSS ToolKit page failed: "
+            ModuleLog.log(TAG + " OSS ToolKit page failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }

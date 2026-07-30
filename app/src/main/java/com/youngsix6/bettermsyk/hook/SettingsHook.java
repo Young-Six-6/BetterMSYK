@@ -22,7 +22,6 @@ import java.util.WeakHashMap;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public final class SettingsHook {
@@ -40,6 +39,8 @@ public final class SettingsHook {
             "com.youngsix6.bettermsyk.extra.OSS_TOOLKIT";
     static final String EXTRA_MODULE_SETTINGS =
             "com.youngsix6.bettermsyk.extra.MODULE_SETTINGS";
+    static final String EXTRA_MODULE_LOGS =
+            "com.youngsix6.bettermsyk.extra.MODULE_LOGS";
     private static final int HIDDEN_ENTRY_TAP_COUNT = 7;
 
     private static volatile boolean sIdsResolved;
@@ -77,14 +78,14 @@ public final class SettingsHook {
         XposedBridge.log(TAG
                 + " SettingsHook.init() — registering hidden tools entry...");
         try {
-            Class<?> activityClass = XposedHelpers.findClass(
+            Class<?> activityClass = CompatReflect.findClass(
                     "com.zdsoft.newsquirrel.android.activity.student"
                             + ".PersonCenterStuActivity",
                     lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onCreate",
-                    android.os.Bundle.class,
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onCreate",
+                            android.os.Bundle.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(
@@ -100,9 +101,9 @@ public final class SettingsHook {
                             }
                         }
                     });
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onDestroy",
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onDestroy"),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(

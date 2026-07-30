@@ -11,6 +11,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.provider.OpenableColumns;
@@ -40,7 +42,6 @@ import java.util.concurrent.Executors;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -52,6 +53,8 @@ public final class ModuleSettingsHook {
     private static final String TAG = "[BetterMSYK]";
     private static final String ABOUT_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.teacher.AboutMsykActivity";
+    private static final String MODULE_PACKAGE =
+            "com.youngsix6.bettermsyk";
     private static final String SP_FILE = "system_properties";
     private static final String KEY_DISABLE_UPDATE = "disableAppUpdate";
     private static final String KEY_DISABLE_GLOBAL_CACHE = "disableGlobalCache";
@@ -66,6 +69,8 @@ public final class ModuleSettingsHook {
             "ignoreHomeworkTimeLimitEnabled";
     private static final String KEY_HIDDEN_INJECTION_ALWAYS_VISIBLE =
             "hiddenInjectionAlwaysVisible";
+    private static final String KEY_MODULE_LOG_VISIBLE =
+            "moduleLogVisible";
     private static final String LEGACY_KEY_DEBUG_MODE = "isDebugMode";
     private static final String KEY_DEBUG_FEATURES_MIGRATED =
             "debugFeaturesMigratedV1";
@@ -110,11 +115,11 @@ public final class ModuleSettingsHook {
     public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             Class<?> activityClass =
-                    XposedHelpers.findClass(ABOUT_ACTIVITY, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onCreate",
-                    android.os.Bundle.class,
+                    CompatReflect.findClass(ABOUT_ACTIVITY, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onCreate",
+                            android.os.Bundle.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -128,14 +133,12 @@ public final class ModuleSettingsHook {
                         }
                     }
             );
-            Class<?> fragmentActivityClass = XposedHelpers.findClass(
+            Class<?> fragmentActivityClass = CompatReflect.findClass(
                     "androidx.fragment.app.FragmentActivity", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    fragmentActivityClass,
-                    "onActivityResult",
-                    int.class,
-                    int.class,
-                    Intent.class,
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            fragmentActivityClass, "onActivityResult",
+                            int.class, int.class, Intent.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -150,9 +153,9 @@ public final class ModuleSettingsHook {
                         }
                     }
             );
-            XposedHelpers.findAndHookMethod(
-                    fragmentActivityClass,
-                    "onDestroy",
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            fragmentActivityClass, "onDestroy"),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -175,7 +178,7 @@ public final class ModuleSettingsHook {
                     "common_title", "id", activity.getPackageName());
             View title = titleId == 0 ? null : activity.findViewById(titleId);
             if (title != null) {
-                XposedHelpers.callMethod(title, "setText", "模块设置");
+                CompatReflect.callMethod(title, "setText", "模块设置");
             }
 
             View content = activity.findViewById(android.R.id.content);
@@ -256,6 +259,11 @@ public final class ModuleSettingsHook {
     static boolean isHiddenInjectionAlwaysVisible(Context context) {
         return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
                 .getBoolean(KEY_HIDDEN_INJECTION_ALWAYS_VISIBLE, false);
+    }
+
+    static boolean isModuleLogVisible(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_MODULE_LOG_VISIBLE, false);
     }
 
     static boolean isOneClickCorrectEnabled(Context context) {
@@ -484,6 +492,14 @@ public final class ModuleSettingsHook {
                 "隐藏注入常显已关闭，重新进入“我的”页面后恢复头像触发");
         buildBooleanSwitchSetting(
                 activity, content, preferences,
+                KEY_MODULE_LOG_VISIBLE,
+                "显示模块日志",
+                "“关于平台”页面显示模块日志入口，可查看并复制模块主动记录",
+                "“关于平台”页面不显示模块日志入口，日志仍在当前进程内记录",
+                "模块日志入口已启用，重新进入“关于平台”后生效",
+                "模块日志入口已隐藏");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
                 KEY_VOLUME_TRIGGER,
                 "音量触发",
                 "答题卡页面连续按三次音量下触发自动填充",
@@ -578,6 +594,12 @@ public final class ModuleSettingsHook {
                 "兼容性和特殊场景相关行为。");
         buildForceExitSetting(activity, content, preferences);
         buildLauncherIsolationSetting(activity, content, preferences);
+
+        addSettingsSectionHeader(
+                activity, content,
+                "贡献者",
+                "感谢以下贡献者对 BetterMSYK 及相关工具的支持。");
+        buildContributorsSection(activity, content);
     }
 
     private static void buildSystemHomeworkPickerSetting(
@@ -676,6 +698,152 @@ public final class ModuleSettingsHook {
         content.addView(description, descriptionLp);
     }
 
+    private static void buildContributorsSection(
+            Activity activity, LinearLayout content) {
+        LinearLayout card = new LinearLayout(activity);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(activity, 10), dp(activity, 4),
+                dp(activity, 10), dp(activity, 4));
+        card.setBackground(roundedBackground(
+                activity, Color.WHITE, 16, 1,
+                Color.parseColor("#DCE5DE")));
+        card.setElevation(dp(activity, 1));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.topMargin = dp(activity, 14);
+        content.addView(card, cardLp);
+
+        addContributor(
+                activity, card,
+                "contributor_young_six_6",
+                "Young-Six-6",
+                "作者",
+                false);
+        addContributor(
+                activity, card,
+                "contributor_misaka16407",
+                "Misaka16407",
+                "msyk-tool作者",
+                true);
+        addContributor(
+                activity, card,
+                "contributor_laprichael",
+                "Laprichael",
+                "msyk-tool贡献者",
+                true);
+        addContributor(
+                activity, card,
+                "contributor_tonyha7",
+                "Tonyha7",
+                "msyk-invasion作者",
+                true);
+    }
+
+    private static void addContributor(
+            Activity activity, LinearLayout card,
+            String avatarResourceName, String name,
+            String role, boolean addDivider) {
+        if (addDivider) {
+            View divider = new View(activity);
+            divider.setBackgroundColor(Color.parseColor("#E6ECE7"));
+            LinearLayout.LayoutParams dividerLp =
+                    new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            dp(activity, 1));
+            dividerLp.leftMargin = dp(activity, 76);
+            dividerLp.rightMargin = dp(activity, 8);
+            card.addView(divider, dividerLp);
+        }
+
+        LinearLayout row = new LinearLayout(activity);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(activity, 8), dp(activity, 10),
+                dp(activity, 8), dp(activity, 10));
+        card.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        ImageView avatar = new ImageView(activity);
+        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        GradientDrawable avatarBackground = new GradientDrawable();
+        avatarBackground.setShape(GradientDrawable.OVAL);
+        avatarBackground.setColor(Color.parseColor("#E4ECE6"));
+        avatar.setBackground(avatarBackground);
+        avatar.setClipToOutline(true);
+        Drawable avatarDrawable = loadModuleDrawable(
+                activity, avatarResourceName);
+        if (avatarDrawable != null) {
+            avatar.setImageDrawable(avatarDrawable);
+        }
+        LinearLayout.LayoutParams avatarLp = new LinearLayout.LayoutParams(
+                dp(activity, 52), dp(activity, 52));
+        avatarLp.rightMargin = dp(activity, 16);
+        row.addView(avatar, avatarLp);
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(labels, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView nameView = new TextView(activity);
+        nameView.setText(name);
+        nameView.setTextSize(17);
+        nameView.setTextColor(Color.parseColor("#18201B"));
+        nameView.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(nameView);
+
+        TextView roleView = new TextView(activity);
+        roleView.setText(role);
+        roleView.setTextSize(13);
+        roleView.setTextColor(Color.parseColor("#66736B"));
+        LinearLayout.LayoutParams roleLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        roleLp.topMargin = dp(activity, 3);
+        labels.addView(roleView, roleLp);
+    }
+
+    private static Drawable loadModuleDrawable(
+            Activity activity, String resourceName) {
+        try {
+            Context moduleContext = activity.createPackageContext(
+                    MODULE_PACKAGE, Context.CONTEXT_IGNORE_SECURITY);
+            int resourceId = moduleContext.getResources().getIdentifier(
+                    resourceName, "drawable", MODULE_PACKAGE);
+            if (resourceId != 0) {
+                return moduleContext.getResources()
+                        .getDrawable(resourceId, null);
+            }
+        } catch (Throwable t) {
+            ModuleLog.record(TAG + " contributor package resource fallback: "
+                    + resourceName + " · " + t.getClass().getSimpleName());
+        }
+        ClassLoader loader = ModuleSettingsHook.class.getClassLoader();
+        if (loader != null) {
+            for (String extension : new String[]{"jpg", "png"}) {
+                String path = "res/drawable-nodpi/"
+                        + resourceName + "." + extension;
+                try (InputStream input = loader.getResourceAsStream(path)) {
+                    if (input == null) {
+                        continue;
+                    }
+                    Bitmap bitmap = BitmapFactory.decodeStream(input);
+                    if (bitmap != null) {
+                        return new BitmapDrawable(
+                                activity.getResources(), bitmap);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        ModuleLog.record(TAG + " contributor avatar unavailable: "
+                + resourceName);
+        return null;
+    }
+
     private static void buildBooleanSwitchSetting(
             Activity activity, LinearLayout content,
             SharedPreferences preferences, String key, String titleText,
@@ -762,7 +930,7 @@ public final class ModuleSettingsHook {
             Toast.makeText(activity,
                     checked ? enabledToast : disabledToast,
                     Toast.LENGTH_SHORT).show();
-            XposedBridge.log(TAG + " setting changed: "
+            ModuleLog.log(TAG + " setting changed: "
                     + key + "=" + checked);
         });
         card.setOnClickListener(v ->
