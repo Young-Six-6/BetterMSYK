@@ -598,7 +598,7 @@ public final class ModuleSettingsHook {
         addSettingsSectionHeader(
                 activity, content,
                 "贡献者",
-                "感谢以下贡献者对 BetterMSYK 及相关工具的支持。");
+                "感谢以下贡献者对本项目的支持。");
         buildContributorsSection(activity, content);
     }
 
