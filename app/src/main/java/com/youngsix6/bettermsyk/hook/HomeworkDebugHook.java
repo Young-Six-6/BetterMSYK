@@ -331,9 +331,9 @@ public final class HomeworkDebugHook {
             }
 
             try {
-                Object presenter = XposedHelpers.getObjectField(activity, "MvpPre");
+                Object presenter = CompatReflect.getField(activity, "MvpPre");
                 if (presenter != null) {
-                    XposedHelpers.callMethod(presenter, "saveOptionAnswer", false);
+                    CompatReflect.callMethod(presenter, "saveOptionAnswer", false);
                     log(activity, "saveOptionAnswer(false) called");
                 }
             } catch (Throwable t) {
@@ -341,7 +341,7 @@ public final class HomeworkDebugHook {
                         + t.getClass().getSimpleName() + ": " + t.getMessage());
             }
             try {
-                XposedHelpers.callMethod(activity, "updateTheDoView");
+                CompatReflect.callMethod(activity, "updateTheDoView");
                 log(activity, "updateTheDoView called");
             } catch (Throwable t) {
                 log(activity, "updateTheDoView compatibility warning: "
@@ -596,14 +596,14 @@ public final class HomeworkDebugHook {
             View recycler = recyclerId == 0 ? null : activity.findViewById(recyclerId);
             Object adapter = null;
             try {
-                adapter = XposedHelpers.callMethod(activity, "getAdapter");
+                adapter = CompatReflect.callMethod(activity, "getAdapter");
             } catch (Throwable ignored) {
                 if (recycler != null) {
-                    adapter = XposedHelpers.callMethod(recycler, "getAdapter");
+                    adapter = CompatReflect.callMethod(recycler, "getAdapter");
                 }
             }
             if (adapter != null) {
-                XposedHelpers.callMethod(adapter, "notifyDataSetChanged");
+                CompatReflect.callMethod(adapter, "notifyDataSetChanged");
             }
             if (recycler == null) {
                 return;
@@ -615,9 +615,9 @@ public final class HomeworkDebugHook {
                 try {
                     Object currentAdapter = finalAdapter != null
                             ? finalAdapter
-                            : XposedHelpers.callMethod(recycler, "getAdapter");
+                            : CompatReflect.callMethod(recycler, "getAdapter");
                     if (currentAdapter != null) {
-                        XposedHelpers.callMethod(currentAdapter, "notifyDataSetChanged");
+                        CompatReflect.callMethod(currentAdapter, "notifyDataSetChanged");
                     }
                     recycler.requestLayout();
                     recycler.invalidate();
