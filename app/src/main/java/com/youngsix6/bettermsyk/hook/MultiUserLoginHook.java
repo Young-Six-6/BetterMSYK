@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.security.keystore.KeyGenParameterSpec;
@@ -43,7 +44,6 @@ import javax.crypto.spec.GCMParameterSpec;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -57,6 +57,10 @@ public final class MultiUserLoginHook {
             "com.zdsoft.newsquirrel.android.activity.LoginActivity";
     private static final String LOGIN_USER_MODEL =
             "com.zdsoft.newsquirrel.android.model.LoginUserModel";
+    private static final String LOGIN_USER_ENTITY =
+            "com.zdsoft.newsquirrel.android.entity.LoginUser";
+    private static final String APPLICATION_CLASS =
+            "com.zdsoft.newsquirrel.android.NewSquirrelApplication";
     private static final String SP_FILE = "system_properties";
     private static final String KEY_PROFILES = "multiUserProfilesV1";
     private static final String KEY_SELECTED_USERNAME =
@@ -75,6 +79,7 @@ public final class MultiUserLoginHook {
     private static boolean profileCacheLoaded;
     private static List<Profile> profileCache = new ArrayList<>();
     private static SecretKey credentialKey;
+    private static PendingCredential latestPendingCredential;
 
     private MultiUserLoginHook() {
     }
@@ -82,6 +87,13 @@ public final class MultiUserLoginHook {
     public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
         hookLoginPage(lpparam);
         hookSuccessfulLogin(lpparam);
+    }
+
+    static void clearPendingPasswordCredentials() {
+        synchronized (PENDING) {
+            PENDING.clear();
+            latestPendingCredential = null;
+        }
     }
 
     static String getSelectedProfileMac(Context context) {
@@ -103,12 +115,12 @@ public final class MultiUserLoginHook {
     private static void hookLoginPage(
             XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> activityClass = XposedHelpers.findClass(
+            Class<?> activityClass = CompatReflect.findClass(
                     LOGIN_ACTIVITY, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onCreate",
-                    android.os.Bundle.class,
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onCreate",
+                            android.os.Bundle.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(
@@ -123,7 +135,7 @@ public final class MultiUserLoginHook {
                                     () -> attachSelector(activity));
                         }
                     });
-            XposedBridge.log(TAG
+            ModuleLog.log(TAG
                     + " MultiUserLoginHook login UI registered.");
         } catch (Throwable t) {
             logFailure("multi-user login UI hook", t);
@@ -133,8 +145,10 @@ public final class MultiUserLoginHook {
     private static void hookSuccessfulLogin(
             XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> modelClass = XposedHelpers.findClass(
+            Class<?> modelClass = CompatReflect.findClass(
                     LOGIN_USER_MODEL, lpparam.classLoader);
+            Class<?> loginUserClass = CompatReflect.findClass(
+                    LOGIN_USER_ENTITY, lpparam.classLoader);
             XposedBridge.hookAllMethods(
                     modelClass,
                     "loadUser",
@@ -145,7 +159,8 @@ public final class MultiUserLoginHook {
                             if (param.args == null
                                     || param.args.length < 3
                                     || !(param.args[0] instanceof String)
-                                    || !(param.args[1] instanceof String)) {
+                                    || !(param.args[1] instanceof String)
+                                    || !(param.args[2] instanceof String)) {
                                 return;
                             }
                             Context context = modelContext(
@@ -153,7 +168,7 @@ public final class MultiUserLoginHook {
                             if (context == null
                                     || !ModuleSettingsHook
                                     .isMultiUserLoginEnabled(context)) {
-                                PENDING.remove(param.thisObject);
+                                takePendingForModel(param.thisObject);
                                 return;
                             }
                             String preferredMac =
@@ -172,17 +187,22 @@ public final class MultiUserLoginHook {
                                     : "";
                             if (username.isEmpty()
                                     || password.isEmpty()) {
-                                PENDING.remove(param.thisObject);
+                                takePendingForModel(param.thisObject);
                                 return;
                             }
-                            PENDING.put(
-                                    param.thisObject,
+                            PendingCredential pending =
                                     new PendingCredential(
                                             context,
                                             username,
                                             password,
                                             mac,
-                                            System.currentTimeMillis()));
+                                            System.currentTimeMillis());
+                            synchronized (PENDING) {
+                                PENDING.put(param.thisObject, pending);
+                                latestPendingCredential = pending;
+                            }
+                            ModuleLog.record(TAG
+                                    + " multi-user password credential captured");
                         }
                     });
             XposedBridge.hookAllMethods(
@@ -192,17 +212,21 @@ public final class MultiUserLoginHook {
                         @Override
                         protected void afterHookedMethod(
                                 MethodHookParam param) {
-                            PendingCredential pending =
-                                    PENDING.remove(param.thisObject);
-                            if (pending == null
-                                    || System.currentTimeMillis()
-                                    - pending.createdAt
-                                    > PENDING_VALID_MS
-                                    || !ModuleSettingsHook
-                                    .isMultiUserLoginEnabled(
-                                            pending.context)) {
+                            if (param.args == null
+                                    || param.args.length == 0
+                                    || !loginUserClass.isInstance(
+                                            param.args[0])) {
                                 return;
                             }
+                            PendingCredential pending =
+                                    takePendingForModelIfMatches(
+                                            param.thisObject,
+                                            param.args[0]);
+                            if (pending == null) {
+                                return;
+                            }
+                            ModuleLog.record(TAG
+                                    + " multi-user successful login observed");
                             saveProfile(
                                     pending.context,
                                     new Profile(
@@ -212,16 +236,132 @@ public final class MultiUserLoginHook {
                                             System.currentTimeMillis()));
                         }
                     });
-            XposedBridge.log(TAG
+            Class<?> applicationClass = CompatReflect.findClass(
+                    APPLICATION_CLASS, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            applicationClass, "setLoginUser", loginUserClass),
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(
+                                MethodHookParam param) {
+                            if (param.args == null
+                                    || param.args.length == 0
+                                    || param.args[0] == null) {
+                                return;
+                            }
+                            PendingCredential pending =
+                                    takeLatestPendingCredentialFor(
+                                            param.args[0]);
+                            if (pending == null) {
+                                return;
+                            }
+                            ModuleLog.record(TAG
+                                    + " multi-user successful login observed"
+                                    + " via application state");
+                            saveProfile(
+                                    pending.context,
+                                    new Profile(
+                                            pending.username,
+                                            pending.password,
+                                            pending.mac,
+                                            System.currentTimeMillis()));
+                        }
+                    });
+            ModuleLog.log(TAG
                     + " MultiUserLoginHook success tracker registered.");
         } catch (Throwable t) {
             logFailure("multi-user success hook", t);
         }
     }
 
+    private static PendingCredential takePendingForModel(Object model) {
+        synchronized (PENDING) {
+            PendingCredential pending = PENDING.remove(model);
+            if (pending != null && pending == latestPendingCredential) {
+                latestPendingCredential = null;
+            }
+            return pending;
+        }
+    }
+
+    private static PendingCredential takePendingForModelIfMatches(
+            Object model, Object loginUser) {
+        synchronized (PENDING) {
+            PendingCredential pending = PENDING.get(model);
+            if (pending == null) {
+                return null;
+            }
+            if (!isUsablePending(pending)) {
+                PENDING.remove(model);
+                if (pending == latestPendingCredential) {
+                    latestPendingCredential = null;
+                }
+                return null;
+            }
+            if (!matchesPendingUsername(loginUser, pending)) {
+                return null;
+            }
+            PENDING.remove(model);
+            if (pending == latestPendingCredential) {
+                latestPendingCredential = null;
+            }
+            return pending;
+        }
+    }
+
+    private static PendingCredential takeLatestPendingCredentialFor(
+            Object loginUser) {
+        synchronized (PENDING) {
+            PendingCredential pending = latestPendingCredential;
+            if (pending == null) {
+                return null;
+            }
+            if (!isUsablePending(pending)) {
+                latestPendingCredential = null;
+                PENDING.entrySet().removeIf(
+                        entry -> entry.getValue() == pending);
+                return null;
+            }
+            if (!matchesPendingUsername(loginUser, pending)) {
+                ModuleLog.record(TAG
+                        + " multi-user application state did not match"
+                        + " pending username");
+                return null;
+            }
+            latestPendingCredential = null;
+            PENDING.entrySet().removeIf(
+                    entry -> entry.getValue() == pending);
+            return pending;
+        }
+    }
+
+    private static boolean matchesPendingUsername(
+            Object loginUser, PendingCredential pending) {
+        try {
+            Object value = CompatReflect.callMethod(
+                    loginUser, "getUserName");
+            String username = value == null
+                    ? "" : String.valueOf(value).trim();
+            return !username.isEmpty()
+                    && username.equalsIgnoreCase(pending.username);
+        } catch (Throwable t) {
+            logFailure("multi-user application user identity", t);
+            return false;
+        }
+    }
+
+    private static boolean isUsablePending(PendingCredential pending) {
+        return pending != null
+                && System.currentTimeMillis() - pending.createdAt
+                <= PENDING_VALID_MS
+                && ModuleSettingsHook.isMultiUserLoginEnabled(
+                pending.context);
+    }
+
     private static Context modelContext(Object model) {
         try {
-            Object value = XposedHelpers.getObjectField(
+            Object value = CompatReflect.getField(
                     model, "context");
             if (!(value instanceof Context)) {
                 return null;
@@ -296,8 +436,8 @@ public final class MultiUserLoginHook {
                     view -> controller.showDropdown());
             controller.watchUsername();
             controller.restoreSelectedProfile();
-            XposedBridge.log(TAG
-                    + " multi-user selector injected");
+            ModuleLog.log(TAG + " multi-user selector injected, profiles="
+                    + loadProfilesSafely(activity).size());
         } catch (Throwable t) {
             logFailure("multi-user selector injection", t);
         }
@@ -415,6 +555,8 @@ public final class MultiUserLoginHook {
             panel.addView(heading);
 
             ScrollView scrollView = new ScrollView(activity);
+            scrollView.setFillViewport(true);
+            scrollView.setVerticalScrollBarEnabled(true);
             LinearLayout rows = new LinearLayout(activity);
             rows.setOrientation(LinearLayout.VERTICAL);
             scrollView.addView(rows, new ScrollView.LayoutParams(
@@ -446,6 +588,8 @@ public final class MultiUserLoginHook {
                         dp(activity, 420),
                         dp(activity, 58 + profiles.size() * 64));
             }
+            popupHeight = fitPopupHeight(
+                    activity, anchor, popupHeight);
 
             int width = anchor.getWidth() > 0
                     ? anchor.getWidth()
@@ -683,8 +827,8 @@ public final class MultiUserLoginHook {
                                 KEY_SELECTED_USERNAME,
                                 profile.username)
                         .apply();
-                XposedBridge.log(TAG
-                        + " multi-user profile saved");
+                ModuleLog.log(TAG + " multi-user profile saved, count="
+                        + profiles.size());
             } catch (Throwable t) {
                 logFailure("multi-user credential save", t);
             }
@@ -734,9 +878,13 @@ public final class MultiUserLoginHook {
                             profile.mac));
             array.put(object);
         }
-        getPreferences(context).edit()
+        boolean committed = getPreferences(context).edit()
                 .putString(KEY_PROFILES, array.toString())
-                .apply();
+                .commit();
+        if (!committed) {
+            throw new IllegalStateException(
+                    "SharedPreferences commit returned false");
+        }
         profileCache = new ArrayList<>(profiles);
         profileCacheLoaded = true;
     }
@@ -862,6 +1010,23 @@ public final class MultiUserLoginHook {
         return Math.round(value
                 * context.getResources()
                 .getDisplayMetrics().density);
+    }
+
+    private static int fitPopupHeight(
+            Activity activity, View anchor, int desiredHeight) {
+        Rect visibleFrame = new Rect();
+        activity.getWindow().getDecorView()
+                .getWindowVisibleDisplayFrame(visibleFrame);
+        int[] location = new int[2];
+        anchor.getLocationOnScreen(location);
+        int margin = dp(activity, 12);
+        int availableBelow = visibleFrame.bottom
+                - (location[1] + anchor.getHeight()) - margin;
+        int availableAbove = location[1] - visibleFrame.top - margin;
+        int available = Math.max(availableBelow, availableAbove);
+        return available > 0
+                ? Math.max(1, Math.min(desiredHeight, available))
+                : desiredHeight;
     }
 
     private static void logFailure(

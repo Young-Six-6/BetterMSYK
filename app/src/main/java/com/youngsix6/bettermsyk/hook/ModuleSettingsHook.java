@@ -59,6 +59,7 @@ public final class ModuleSettingsHook {
     private static final String KEY_DISABLE_UPDATE = "disableAppUpdate";
     private static final String KEY_DISABLE_GLOBAL_CACHE = "disableGlobalCache";
     private static final String KEY_MULTI_USER_LOGIN = "multiUserLoginEnabled";
+    private static final String KEY_ID_LOGIN = "idLoginEnabled";
     private static final String KEY_COMPACT_MODE = "compactModeEnabled";
     private static final String KEY_FORCE_EXIT = "forceExitEnabled";
     private static final String KEY_SYSTEM_HOMEWORK_PICKER =
@@ -229,6 +230,11 @@ public final class ModuleSettingsHook {
     static boolean isMultiUserLoginEnabled(Context context) {
         return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
                 .getBoolean(KEY_MULTI_USER_LOGIN, false);
+    }
+
+    static boolean isIdLoginEnabled(Context context) {
+        return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
+                .getBoolean(KEY_ID_LOGIN, false);
     }
 
     static boolean isCompactModeEnabled(Context context) {
@@ -468,6 +474,14 @@ public final class ModuleSettingsHook {
                 new LinkedSettingsController();
         buildMultiUserLoginSetting(
                 activity, content, preferences, linkedSettings);
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_ID_LOGIN,
+                "ID法登录",
+                "登录页显示密码登录 / ID登录切换；ID登录使用 userId 走应用内置直登接口",
+                "登录页只使用应用原有密码登录",
+                "ID法登录已启用，重新进入登录页后生效",
+                "ID法登录已关闭，重新进入登录页后生效");
         buildBooleanSwitchSetting(
                 activity, content, preferences,
                 KEY_CUSTOM_MAC,
@@ -1892,8 +1906,8 @@ public final class ModuleSettingsHook {
     private static void updateMultiUserSummary(
             TextView summary, boolean enabled) {
         summary.setText(enabled
-                ? "和自定义设备 MAC 联动；加密保存多组用户名、密码和 MAC"
-                : "登录页使用应用原有的单账号记忆方式；开启时会联动开启自定义 MAC");
+                ? "和自定义设备 MAC 联动；加密保存多组密码账号及ID账号"
+                : "不显示模块的密码/ID账号选择器；开启时会联动开启自定义 MAC");
     }
 
     private static void updateCompactModeSummary(

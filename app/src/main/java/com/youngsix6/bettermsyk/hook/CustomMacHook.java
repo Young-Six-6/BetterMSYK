@@ -16,12 +16,12 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
+import android.widget.Toast;
 
 import java.util.Locale;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
@@ -45,15 +45,16 @@ public final class CustomMacHook {
     public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
         hookMacResolver(lpparam);
         hookLoginActivity(lpparam);
+        hookLoginSubmission(lpparam);
     }
 
     private static void hookMacResolver(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
-                    MAC_UTIL,
-                    lpparam.classLoader,
-                    "getMac",
-                    Context.class,
+            Class<?> macClass = CompatReflect.findClass(
+                    MAC_UTIL, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            macClass, "getMac", Context.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -83,11 +84,11 @@ public final class CustomMacHook {
 
     private static void hookLoginActivity(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> activityClass = XposedHelpers.findClass(LOGIN_ACTIVITY, lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(
-                    activityClass,
-                    "onCreate",
-                    Bundle.class,
+            Class<?> activityClass = CompatReflect.findClass(
+                    LOGIN_ACTIVITY, lpparam.classLoader);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "onCreate", Bundle.class),
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -104,6 +105,39 @@ public final class CustomMacHook {
             XposedBridge.log(TAG + " CustomMacHook login UI registered.");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " CustomMacHook login UI failed: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
+    }
+
+    /**
+     * 登录按钮并不保证让 MAC 输入框失去焦点，因此必须在真正提交前再次校验。
+     * 同时挂 login() 是为了覆盖权限请求完成后直接继续登录的路径。
+     */
+    private static void hookLoginSubmission(
+            XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> activityClass = CompatReflect.findClass(
+                    LOGIN_ACTIVITY, lpparam.classLoader);
+            XC_MethodHook validator = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    Activity activity = (Activity) param.thisObject;
+                    if (!validateMacBeforeLogin(activity)) {
+                        param.setResult(null);
+                    }
+                }
+            };
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(
+                            activityClass, "loginCheck", boolean.class),
+                    validator);
+            XposedBridge.hookMethod(
+                    CompatReflect.findMethodExact(activityClass, "login"),
+                    validator);
+            ModuleLog.log(TAG
+                    + " CustomMacHook login validation registered.");
+        } catch (Throwable t) {
+            ModuleLog.log(TAG + " CustomMacHook login validation failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
@@ -162,6 +196,7 @@ public final class CustomMacHook {
                                     ViewGroup.LayoutParams.WRAP_CONTENT);
             rowParams.removeRule(RelativeLayout.BELOW);
             rowParams.addRule(RelativeLayout.BELOW, passLayoutId);
+            int formRowWidth = resolveFormRowWidth(activity, root);
             row.setLayoutParams(rowParams);
 
             ImageView icon = new ImageView(activity);
@@ -191,7 +226,7 @@ public final class CustomMacHook {
 
             EditText createdInput;
             try {
-                createdInput = (EditText) XposedHelpers.newInstance(
+                createdInput = (EditText) CompatReflect.newInstance(
                         passEdit.getClass(), activity);
             } catch (Throwable ignored) {
                 createdInput = new EditText(activity);
@@ -263,16 +298,10 @@ public final class CustomMacHook {
                 }
             });
             input.setOnFocusChangeListener((view, hasFocus) -> {
-                if (hasFocus || TextUtils.isEmpty(input.getText())) {
+                if (hasFocus) {
                     return;
                 }
-                String normalized = normalizeMac(input.getText().toString());
-                if (normalized == null) {
-                    input.setError("MAC格式应为 AA:BB:CC:DD:EE:FF");
-                } else if (!normalized.contentEquals(input.getText())) {
-                    input.setText(normalized);
-                    input.setSelection(input.length());
-                }
+                validateAndNormalizeInput(input, false);
             });
 
             row.addView(icon);
@@ -299,11 +328,148 @@ public final class CustomMacHook {
                     passLayoutId,
                     row.getId()
             );
+            constrainDividerToRow(
+                    passwordDivider, row.getId(), formRowWidth);
+            row.post(() -> {
+                // 注入发生在首次布局前时，logo/root 的宽度仍可能为 0。
+                // 布局完成后重新取实际表单宽度，避免 MAC 底线退回全屏宽度。
+                constrainDividerToRow(
+                        passwordDivider,
+                        row.getId(),
+                        resolveFormRowWidth(activity, root));
+                if (passwordDivider != null) {
+                    // 等新的短宽度完成一次布局后，再按输入框中心微调位置。
+                    passwordDivider.post(() -> alignDividerWithInput(
+                            root, input, passwordDivider));
+                }
+            });
             XposedBridge.log(TAG + " custom MAC input injected");
         } catch (Throwable t) {
             XposedBridge.log(TAG + " custom MAC input failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
+    }
+
+    private static boolean validateMacBeforeLogin(Activity activity) {
+        if (activity == null
+                || (!ModuleSettingsHook.isCustomMacInputEnabled(activity)
+                && !ModuleSettingsHook.isMultiUserLoginEnabled(activity))) {
+            return true;
+        }
+        EditText input = findMacInput(activity);
+        if (input == null) {
+            // 输入框尚未完成注入时不拦截官方登录流程。
+            return true;
+        }
+        return validateAndNormalizeInput(input, true);
+    }
+
+    private static boolean validateAndNormalizeInput(
+            EditText input, boolean showToast) {
+        String raw = input.getText() == null
+                ? "" : input.getText().toString().trim();
+        if (TextUtils.isEmpty(raw)) {
+            input.setError(null);
+            return true;
+        }
+        String normalized = normalizeMac(raw);
+        if (normalized == null) {
+            String message = "MAC格式应为 AA:BB:CC:DD:EE:FF";
+            input.setError(message);
+            input.requestFocus();
+            if (showToast) {
+                Toast.makeText(input.getContext(), message,
+                        Toast.LENGTH_SHORT).show();
+            }
+            ModuleLog.record(TAG + " login blocked by invalid custom MAC");
+            return false;
+        }
+        input.setError(null);
+        if (!normalized.contentEquals(input.getText())) {
+            input.setText(normalized);
+            input.setSelection(input.length());
+        }
+        return true;
+    }
+
+    static EditText findMacInput(Activity activity) {
+        View tagged = activity.getWindow().getDecorView()
+                .findViewWithTag(INPUT_TAG);
+        if (!(tagged instanceof ViewGroup)) {
+            return null;
+        }
+        ViewGroup row = (ViewGroup) tagged;
+        for (int index = 0; index < row.getChildCount(); index++) {
+            View child = row.getChildAt(index);
+            if (child instanceof EditText) {
+                return (EditText) child;
+            }
+        }
+        return null;
+    }
+
+    private static int resolveFormRowWidth(
+            Activity activity, RelativeLayout root) {
+        int preferredWidth = 0;
+        int logoId = getId(activity, "login_logo_frame");
+        View logo = logoId == 0 ? null : activity.findViewById(logoId);
+        if (logo != null) {
+            preferredWidth = logo.getWidth();
+        }
+        if (preferredWidth <= 0) {
+            int dimensionId = activity.getResources().getIdentifier(
+                    "x660", "dimen", activity.getPackageName());
+            if (dimensionId != 0) {
+                preferredWidth = activity.getResources()
+                        .getDimensionPixelSize(dimensionId);
+            }
+        }
+        if (preferredWidth <= 0) {
+            preferredWidth = dp(activity, 420);
+        }
+        int availableWidth = root.getWidth() - dp(activity, 32);
+        return availableWidth > 0
+                ? Math.min(preferredWidth, availableWidth)
+                : preferredWidth;
+    }
+
+    private static void constrainDividerToRow(
+            View divider, int rowId, int rowWidth) {
+        if (divider == null
+                || !(divider.getLayoutParams()
+                instanceof RelativeLayout.LayoutParams)) {
+            return;
+        }
+        RelativeLayout.LayoutParams params =
+                (RelativeLayout.LayoutParams) divider.getLayoutParams();
+        params.width = rowWidth;
+        params.removeRule(RelativeLayout.ALIGN_START);
+        params.removeRule(RelativeLayout.ALIGN_END);
+        params.removeRule(RelativeLayout.ALIGN_LEFT);
+        params.removeRule(RelativeLayout.ALIGN_RIGHT);
+        params.removeRule(RelativeLayout.BELOW);
+        params.addRule(RelativeLayout.BELOW, rowId);
+        params.addRule(
+                RelativeLayout.CENTER_HORIZONTAL,
+                RelativeLayout.TRUE);
+        divider.setLayoutParams(params);
+    }
+
+    private static void alignDividerWithInput(
+            RelativeLayout root, EditText input, View divider) {
+        if (divider == null || root.getWidth() <= 0
+                || input.getWidth() <= 0 || divider.getWidth() <= 0) {
+            return;
+        }
+        int[] rootLocation = new int[2];
+        int[] inputLocation = new int[2];
+        root.getLocationOnScreen(rootLocation);
+        input.getLocationOnScreen(inputLocation);
+        float inputCenter = inputLocation[0] - rootLocation[0]
+                + input.getWidth() / 2f;
+        float dividerCenter = divider.getLeft()
+                + divider.getWidth() / 2f;
+        divider.setTranslationX(inputCenter - dividerCenter);
     }
 
     private static void rerouteViewsBelowPassword(
@@ -433,6 +599,11 @@ public final class CustomMacHook {
                 "id",
                 context.getPackageName()
         );
+    }
+
+    private static int dp(Context context, int value) {
+        return Math.round(value
+                * context.getResources().getDisplayMetrics().density);
     }
 
     private static SharedPreferences getPreferences(Context context) {
