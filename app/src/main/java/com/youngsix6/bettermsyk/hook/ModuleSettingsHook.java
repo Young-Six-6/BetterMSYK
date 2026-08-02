@@ -87,6 +87,8 @@ public final class ModuleSettingsHook {
             "debugCodeGeneratorEnabled";
     private static final String KEY_HOMEWORK_ID_DISPLAY =
             "homeworkIdDisplayEnabled";
+    private static final String KEY_STUDENT_ID_DISPLAY =
+            "studentIdDisplayEnabled";
     private static final String KEY_CUSTOM_MAC =
             "customMacInputEnabled";
     private static final String KEY_VOLUME_TRIGGER =
@@ -300,6 +302,10 @@ public final class ModuleSettingsHook {
     static boolean isHomeworkIdDisplayEnabled(Context context) {
         ensureLegacyDebugMigrated(context);
         return getBoolean(context, KEY_HOMEWORK_ID_DISPLAY);
+    }
+
+    static boolean isStudentIdDisplayEnabled(Context context) {
+        return getBoolean(context, KEY_STUDENT_ID_DISPLAY);
     }
 
     static boolean isCustomMacInputEnabled(Context context) {
@@ -601,6 +607,14 @@ public final class ModuleSettingsHook {
         splashController.build();
         buildCompactModeSetting(activity, content, preferences);
         buildDisplayIdentitySetting(activity, content, preferences);
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_STUDENT_ID_DISPLAY,
+                "显示学生 ID",
+                "“我的”页面在学校后显示 studentId，点击可复制完整值",
+                "“我的”页面不额外显示 studentId",
+                "学生 ID 显示已启用，重新进入“我的”页面后生效",
+                "学生 ID 显示已关闭，重新进入“我的”页面后生效");
 
         addSettingsSectionHeader(
                 activity, content,

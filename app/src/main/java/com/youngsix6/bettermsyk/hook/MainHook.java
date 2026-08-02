@@ -53,6 +53,7 @@ public class MainHook implements IXposedHookLoadPackage {
         ForceExitHook.init(lpparam);
         LauncherIsolationHook.init(lpparam);
         DisplayIdentityHook.init(lpparam);
+        StudentIdDisplayHook.init(lpparam);
         SystemHomeworkPickerHook.init(lpparam);
         HomeworkAudioFileHook.init(lpparam);
         HomeworkTimeLimitHook.init(lpparam);
