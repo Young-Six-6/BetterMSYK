@@ -72,6 +72,8 @@ public final class IdLoginHook {
             "com.zdsoft.newsquirrel.android.util.MacAddressUtils";
     private static final String VERSION_UTIL =
             "com.zdsoft.littleapple.utils.VersionUtils";
+    private static final String PUBLIC_KEY_UTIL =
+            "com.zdsoft.newsquirrel.android.util.PublicKeyUtil";
     private static final String APPLICATION_CLASS =
             "com.zdsoft.newsquirrel.android.NewSquirrelApplication";
     private static final String BASE_APPLICATION_CONFIG =
@@ -1179,6 +1181,7 @@ public final class IdLoginHook {
             setPending(activity, model, device, userId,
                     disposable, requestId);
             try {
+                setApplicationSign(activity, "");
                 method.invoke(model, userId, device.macAddress,
                         device.sdkVersion, device.serialNumber,
                         disposable, listener);
@@ -1498,9 +1501,17 @@ public final class IdLoginHook {
                     activity, requestId, true);
             if (pending != null) {
                 clearDisposable(pending.disposable);
+                Object loginUser = null;
+                try {
+                    loginUser = prepareLoginUserFromResponse(
+                            activity, pending.model, object, pending.userId);
+                } catch (Throwable t) {
+                    logFailure("id-login session repair", t);
+                }
+                final Object preparedLoginUser = loginUser;
                 activity.runOnUiThread(() -> completeSuccessfulLogin(
                         activity, pending.model, pending.device,
-                        pending.userId, null));
+                        pending.userId, preparedLoginUser));
             }
         } catch (Throwable t) {
             logFailure("id-login response", t);
@@ -1551,6 +1562,11 @@ public final class IdLoginHook {
                 CompatReflect.callMethod(
                         loginUser, "setSchoolId", schoolId);
             }
+            repairLoginUserFields(loginUser, infoMap, pending.userId);
+            restoreSignFromResponse(
+                    activity, object,
+                    readLoginUserText(loginUser, "getLoginUserId",
+                            "loginUserId", "userId", "id"));
 
             try {
                 CompatReflect.callMethod(
@@ -1579,6 +1595,164 @@ public final class IdLoginHook {
             logFailure("id-login observer recovery", t);
             return false;
         }
+    }
+
+    private static Object prepareLoginUserFromResponse(
+            Activity activity, Object model, JSONObject response,
+            String directUserId) throws Exception {
+        ClassLoader loader = activity.getClassLoader();
+        Class<?> applicationClass = CompatReflect.findClass(
+                APPLICATION_CLASS, loader);
+        JSONObject infoMap = response.optJSONObject("InfoMap");
+        String responseUserId = infoMap == null ? ""
+                : infoMap.optString("id", "").trim();
+        if (TextUtils.isEmpty(responseUserId)) {
+            responseUserId = directUserId == null
+                    ? "" : directUserId.trim();
+        }
+
+        Object loginUser = CompatReflect.callStaticMethodExact(
+                applicationClass, "getLoginUser",
+                new Class<?>[]{Context.class}, activity);
+        String currentUserId = loginUser == null ? ""
+                : readLoginUserText(loginUser, "getLoginUserId",
+                "loginUserId", "userId", "id");
+        boolean rebuilt = loginUser == null
+                || (!TextUtils.isEmpty(responseUserId)
+                && !responseUserId.equals(currentUserId));
+        if (rebuilt && infoMap != null) {
+            Class<?> loginUserClass = CompatReflect.findClass(
+                    LOGIN_USER_ENTITY, loader);
+            Class<?> gsonClass = CompatReflect.findClass(GSON_CLASS, loader);
+            Object gson = CompatReflect.newInstance(gsonClass);
+            loginUser = CompatReflect.callMethod(
+                    gson, "fromJson", infoMap.toString(), loginUserClass);
+        }
+        if (loginUser == null) {
+            throw new IllegalStateException("LoginUser unavailable after ID login");
+        }
+
+        boolean repaired = repairLoginUserFields(
+                loginUser, infoMap, directUserId);
+        if (rebuilt || repaired) {
+            persistRepairedLoginUser(model, loginUser);
+        }
+        CompatReflect.callStaticMethod(
+                applicationClass, "setLoginUser", loginUser);
+
+        String userId = readLoginUserText(
+                loginUser, "getLoginUserId",
+                "loginUserId", "userId", "id");
+        restoreSignFromResponse(activity, response, userId);
+        return loginUser;
+    }
+
+    private static boolean repairLoginUserFields(
+            Object loginUser, JSONObject infoMap, String directUserId) {
+        boolean repaired = false;
+        String userId = readLoginUserText(
+                loginUser, "getLoginUserId",
+                "loginUserId", "userId", "id");
+        if (TextUtils.isEmpty(userId)) {
+            String responseUserId = infoMap == null ? ""
+                    : infoMap.optString("id", "").trim();
+            if (TextUtils.isEmpty(responseUserId)) {
+                responseUserId = directUserId == null
+                        ? "" : directUserId.trim();
+            }
+            if (!TextUtils.isEmpty(responseUserId)) {
+                CompatReflect.callMethod(
+                        loginUser, "setLoginUserId", responseUserId);
+                repaired = true;
+            }
+        }
+
+        String unitId = readLoginUserText(
+                loginUser, "getUnitId", "unitId");
+        String responseUnitId = infoMap == null ? ""
+                : infoMap.optString("unitId", "").trim();
+        if (TextUtils.isEmpty(unitId)
+                && !TextUtils.isEmpty(responseUnitId)) {
+            CompatReflect.callMethod(
+                    loginUser, "setUnitId", responseUnitId);
+            repaired = true;
+        }
+
+        String schoolId = infoMap == null ? ""
+                : infoMap.optString("schoolId", "").trim();
+        if (!TextUtils.isEmpty(schoolId)) {
+            String currentSchoolId = readLoginUserText(
+                    loginUser, "getSchoolId", "schoolId");
+            if (TextUtils.isEmpty(currentSchoolId)) {
+                CompatReflect.callMethod(
+                        loginUser, "setSchoolId", schoolId);
+                repaired = true;
+            }
+        }
+        if (repaired) {
+            ModuleLog.record(TAG + " id-login user fields repaired");
+        }
+        return repaired;
+    }
+
+    private static void persistRepairedLoginUser(
+            Object model, Object loginUser) {
+        try {
+            CompatReflect.callMethod(
+                    model, "insertUserByLoginUser", loginUser);
+        } catch (Throwable t) {
+            logFailure("id-login repaired user cache", t);
+        }
+        try {
+            CompatReflect.callMethod(model, "addLoginUser", loginUser);
+        } catch (Throwable t) {
+            logFailure("id-login repaired login-user cache", t);
+        }
+    }
+
+    private static void restoreSignFromResponse(
+            Activity activity, JSONObject response, String userId) {
+        try {
+            String encryptedSign = response.optString("sign", "");
+            if (TextUtils.isEmpty(encryptedSign)) {
+                encryptedSign = response.optString("serverSign", "");
+            }
+            encryptedSign = encryptedSign.replaceAll("\\s", "");
+            if (TextUtils.isEmpty(encryptedSign)
+                    || TextUtils.isEmpty(userId)) {
+                ModuleLog.record(TAG
+                        + " id-login sign unavailable in response");
+                return;
+            }
+
+            ClassLoader loader = activity.getClassLoader();
+            Class<?> publicKeyClass = CompatReflect.findClass(
+                    PUBLIC_KEY_UTIL, loader);
+            Object verifiedValue = CompatReflect.callStaticMethod(
+                    publicKeyClass, "signatureVerify", encryptedSign);
+            String verified = verifiedValue == null
+                    ? "" : String.valueOf(verifiedValue);
+            String[] parts = verified.split(":");
+            if (!verified.contains(userId) || parts.length < 2) {
+                ModuleLog.record(TAG
+                        + " id-login sign verification failed");
+                return;
+            }
+
+            setApplicationSign(activity, parts[1] + userId);
+            ModuleLog.record(TAG + " id-login sign restored");
+        } catch (Throwable t) {
+            logFailure("id-login sign restore", t);
+        }
+    }
+
+    private static void setApplicationSign(
+            Activity activity, String sign) throws Exception {
+        Class<?> applicationClass = CompatReflect.findClass(
+                APPLICATION_CLASS, activity.getClassLoader());
+        Field signField = applicationClass.getDeclaredField("sign");
+        signField.setAccessible(true);
+        signField.set(null, sign == null ? "" : sign);
     }
 
     private static void clearPending(

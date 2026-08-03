@@ -3,6 +3,7 @@ package com.youngsix6.bettermsyk.hook;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.ContentResolver;
 import android.content.Intent;
@@ -459,7 +460,7 @@ final class OssMaterialTool {
         private void readCurrentUserLabel(TextView label) {
             EXECUTOR.execute(() -> {
                 try {
-                    Session session = currentSession(classLoader);
+                    Session session = currentSession(activity, classLoader);
                     ui(() -> label.setText("当前账号：" + session.realName
                             + "（" + session.userId + "）"));
                 } catch (Throwable t) {
@@ -499,7 +500,7 @@ final class OssMaterialTool {
 
             EXECUTOR.execute(() -> {
                 try {
-                    Session session = currentSession(classLoader);
+                    Session session = currentSession(activity, classLoader);
                     FetchResult result = fetchItems(activity, classLoader,
                             session, homeworkId, mode);
                     ui(() -> {
@@ -1080,21 +1081,75 @@ final class OssMaterialTool {
         }
     }
 
-    private static Session currentSession(ClassLoader classLoader) {
+    private static Session currentSession(
+            Context context, ClassLoader classLoader) {
         Class<?> appClass = CompatReflect.findClass(APP_CLASS, classLoader);
-        Object loginUser = CompatReflect.callStaticMethod(appClass, "getLoginUser");
+        Object loginUser;
+        try {
+            loginUser = CompatReflect.callStaticMethodExact(
+                    appClass, "getLoginUser",
+                    new Class<?>[]{Context.class}, context);
+        } catch (Throwable ignored) {
+            loginUser = CompatReflect.callStaticMethod(
+                    appClass, "getLoginUser");
+        }
         if (loginUser == null) {
             throw new IllegalStateException("当前没有登录用户");
         }
-        String userId = valueOf(CompatReflect.callMethod(loginUser, "getLoginUserId"));
-        String unitId = valueOf(CompatReflect.callMethod(loginUser, "getUnitId"));
-        String realName = valueOf(CompatReflect.callMethod(loginUser, "getRealName"));
-        String sign = valueOf(CompatReflect.getStaticField(appClass, "sign"));
-        if (userId.isEmpty() || unitId.isEmpty() || sign.isEmpty()) {
-            throw new IllegalStateException("当前登录态缺少 userId、unitId 或 sign");
+        String userId = readLoginUserText(
+                loginUser, "getLoginUserId",
+                "loginUserId", "userId", "id");
+        String unitId = readLoginUserText(
+                loginUser, "getUnitId", "unitId");
+        String realName = readLoginUserText(
+                loginUser, "getRealName", "realName", "name");
+        String sign = valueOf(
+                CompatReflect.getStaticField(appClass, "sign")).trim();
+        List<String> missing = new ArrayList<>();
+        if (userId.isEmpty()) {
+            missing.add("userId");
+        }
+        if (unitId.isEmpty()) {
+            missing.add("unitId");
+        }
+        if (!missing.isEmpty()) {
+            String fields = String.join("、", missing);
+            ModuleLog.record(TAG + " OSS session missing " + fields);
+            throw new IllegalStateException("当前登录态缺少 " + fields);
+        }
+        if (sign.isEmpty()) {
+            ModuleLog.record(TAG
+                    + " OSS session uses empty sign for ID login compatibility");
         }
         return new Session(userId, unitId,
                 realName.isEmpty() ? userId : realName, sign);
+    }
+
+    private static String readLoginUserText(
+            Object loginUser, String methodName, String... fieldNames) {
+        try {
+            Object value = CompatReflect.callMethod(loginUser, methodName);
+            if (value != null) {
+                String text = String.valueOf(value).trim();
+                if (!text.isEmpty()) {
+                    return text;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        for (String fieldName : fieldNames) {
+            try {
+                Object value = CompatReflect.getField(loginUser, fieldName);
+                if (value != null) {
+                    String text = String.valueOf(value).trim();
+                    if (!text.isEmpty()) {
+                        return text;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return "";
     }
 
     private static FetchResult fetchItems(Activity activity, ClassLoader classLoader,
@@ -1421,7 +1476,7 @@ final class OssMaterialTool {
             Activity activity, ClassLoader classLoader, String homeworkId,
             ImageItem requestedItem, byte[] bytes,
             String fileName, String declaredMime) throws Exception {
-        Session session = currentSession(classLoader);
+        Session session = currentSession(activity, classLoader);
         String requestedKey = safeObjectKey(requestedItem.ossKey);
         int mode = "学生答案".equals(requestedItem.category)
                 ? MODE_STUDENT : MODE_MATERIAL;
