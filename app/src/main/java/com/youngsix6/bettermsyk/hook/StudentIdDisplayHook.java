@@ -18,7 +18,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** 在学生“我的”页面显示当前登录用户的 studentId。 */
+/** 在学生“我的”页面显示并复制当前登录用户的 studentId / unitId。 */
 public final class StudentIdDisplayHook {
 
     private static final String TAG = "[BetterMSYK]";
@@ -27,8 +27,10 @@ public final class StudentIdDisplayHook {
                     + ".PersonCenterStuActivity";
     private static final String APPLICATION_CLASS =
             "com.zdsoft.newsquirrel.android.NewSquirrelApplication";
-    private static final String INJECTED_TAG =
+    private static final String STUDENT_ID_TAG =
             "bettermsyk_student_id_display";
+    private static final String UNIT_ID_TAG =
+            "bettermsyk_unit_id_display";
 
     private StudentIdDisplayHook() {
     }
@@ -45,12 +47,18 @@ public final class StudentIdDisplayHook {
                         protected void afterHookedMethod(
                                 MethodHookParam param) {
                             Activity activity = (Activity) param.thisObject;
-                            if (!ModuleSettingsHook
-                                    .isStudentIdDisplayEnabled(activity)) {
+                            boolean showStudentId = ModuleSettingsHook
+                                    .isStudentIdDisplayEnabled(activity);
+                            boolean showUnitId = ModuleSettingsHook
+                                    .isUnitIdDisplayEnabled(activity);
+                            if (!showStudentId && !showUnitId) {
                                 return;
                             }
                             activity.getWindow().getDecorView().post(
-                                    () -> injectStudentId(activity));
+                                    () -> injectIdentifiers(
+                                            activity,
+                                            showStudentId,
+                                            showUnitId));
                         }
                     });
             ModuleLog.log(TAG + " StudentIdDisplayHook registered.");
@@ -59,58 +67,108 @@ public final class StudentIdDisplayHook {
         }
     }
 
-    private static void injectStudentId(Activity activity) {
+    private static void injectIdentifiers(
+            Activity activity, boolean showStudentId,
+            boolean showUnitId) {
         try {
             View content = activity.findViewById(android.R.id.content);
-            if (content != null
-                    && content.findViewWithTag(INJECTED_TAG) != null) {
-                return;
-            }
             int schoolViewId = getId(activity, "tv_stu_school_name");
             View schoolView = schoolViewId == 0
                     ? null : activity.findViewById(schoolViewId);
             if (!(schoolView instanceof TextView)
                     || !(schoolView.getParent() instanceof RelativeLayout)) {
-                ModuleLog.log(TAG + " studentId display anchor missing");
+                ModuleLog.log(TAG + " user identifier display anchor missing");
                 return;
             }
 
-            String studentId = readStudentId(activity);
-            if (TextUtils.isEmpty(studentId)) {
-                ModuleLog.log(TAG + " studentId display value missing");
+            Object loginUser = readLoginUser(activity);
+            if (loginUser == null) {
+                ModuleLog.log(TAG + " user identifier login state missing");
                 return;
             }
 
             TextView source = (TextView) schoolView;
-            TextView valueView = cloneLabel(activity, source);
-            valueView.setTag(INJECTED_TAG);
-            valueView.setId(View.generateViewId());
-            valueView.setText("studentId：" + studentId);
-            valueView.setContentDescription(
-                    "studentId " + studentId + "，点击复制");
-            valueView.setSingleLine(true);
-            valueView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-            int screenWidth = activity.getResources()
-                    .getDisplayMetrics().widthPixels;
-            valueView.setMaxWidth(Math.max(1,
-                    Math.min(dp(activity, 300), screenWidth / 4)));
-            View.OnClickListener copyListener = view ->
-                    copyStudentId(activity, studentId);
-            valueView.setOnClickListener(copyListener);
-            valueView.setOnLongClickListener(view -> {
-                copyStudentId(activity, studentId);
-                return true;
-            });
+            RelativeLayout parent = (RelativeLayout) source.getParent();
+            int anchorId = schoolViewId;
+            int visibleCount = (showStudentId ? 1 : 0)
+                    + (showUnitId ? 1 : 0);
 
-            RelativeLayout.LayoutParams params = cloneLayoutParams(source);
-            clearHorizontalRules(params);
-            params.addRule(RelativeLayout.END_OF, schoolViewId);
-            valueView.setLayoutParams(params);
-            ((RelativeLayout) source.getParent()).addView(valueView);
-            ModuleLog.log(TAG + " studentId display injected");
+            if (showStudentId) {
+                View existing = content == null ? null
+                        : content.findViewWithTag(STUDENT_ID_TAG);
+                if (existing != null) {
+                    anchorId = existing.getId();
+                } else {
+                    String studentId = readStudentId(loginUser);
+                    if (TextUtils.isEmpty(studentId)) {
+                        ModuleLog.log(TAG
+                                + " studentId display value missing");
+                    } else {
+                        TextView view = addIdentifierView(
+                                activity, parent, source, anchorId,
+                                STUDENT_ID_TAG, "studentId",
+                                studentId, visibleCount);
+                        anchorId = view.getId();
+                        ModuleLog.log(TAG
+                                + " studentId display injected");
+                    }
+                }
+            }
+
+            if (showUnitId) {
+                View existing = content == null ? null
+                        : content.findViewWithTag(UNIT_ID_TAG);
+                if (existing == null) {
+                    String unitId = readUnitId(loginUser);
+                    if (TextUtils.isEmpty(unitId)) {
+                        ModuleLog.log(TAG
+                                + " unitId display value missing");
+                    } else {
+                        addIdentifierView(
+                                activity, parent, source, anchorId,
+                                UNIT_ID_TAG, "unitId",
+                                unitId, visibleCount);
+                        ModuleLog.log(TAG
+                                + " unitId display injected");
+                    }
+                }
+            }
         } catch (Throwable throwable) {
             logFailure("injection", throwable);
         }
+    }
+
+    private static TextView addIdentifierView(
+            Activity activity, RelativeLayout parent,
+            TextView source, int anchorId, String tag,
+            String label, String value, int visibleCount) {
+        TextView valueView = cloneLabel(activity, source);
+        valueView.setTag(tag);
+        valueView.setId(View.generateViewId());
+        valueView.setText(label + "：" + value);
+        valueView.setContentDescription(
+                label + " " + value + "，点击复制");
+        valueView.setSingleLine(true);
+        valueView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        int screenWidth = activity.getResources()
+                .getDisplayMetrics().widthPixels;
+        int widthDivisor = visibleCount > 1 ? 5 : 4;
+        valueView.setMaxWidth(Math.max(1,
+                Math.min(dp(activity, 300),
+                        screenWidth / widthDivisor)));
+        valueView.setOnClickListener(view ->
+                copyIdentifier(activity, label, value));
+        valueView.setOnLongClickListener(view -> {
+            copyIdentifier(activity, label, value);
+            return true;
+        });
+
+        RelativeLayout.LayoutParams params = cloneLayoutParams(source);
+        clearHorizontalRules(params);
+        params.addRule(RelativeLayout.END_OF, anchorId);
+        valueView.setLayoutParams(params);
+        parent.addView(valueView);
+        return valueView;
     }
 
     private static TextView cloneLabel(Activity activity, TextView source) {
@@ -165,38 +223,66 @@ public final class StudentIdDisplayHook {
         params.removeRule(RelativeLayout.CENTER_IN_PARENT);
     }
 
-    private static String readStudentId(Activity activity) {
+    private static Object readLoginUser(Activity activity) {
         try {
             Class<?> applicationClass = CompatReflect.findClass(
                     APPLICATION_CLASS, activity.getClassLoader());
-            Object loginUser = CompatReflect.callStaticMethodExact(
+            return CompatReflect.callStaticMethodExact(
                     applicationClass, "getLoginUser",
                     new Class<?>[]{Context.class}, activity);
-            if (loginUser == null) {
-                return "";
-            }
-            try {
-                Object value = CompatReflect.callMethod(
-                        loginUser, "getStudentId");
-                if (value != null
-                        && !String.valueOf(value).trim().isEmpty()) {
-                    return String.valueOf(value).trim();
-                }
-            } catch (Throwable ignored) {
-                // 当前版本的 LoginUser 将 studentId 序列化为 id，
-                // 对外方法名为 getLoginUserId()。
-            }
-            Object value = CompatReflect.callMethod(
-                    loginUser, "getLoginUserId");
-            return value == null ? "" : String.valueOf(value).trim();
         } catch (Throwable throwable) {
             logFailure("value lookup", throwable);
-            return "";
+            return null;
         }
     }
 
-    private static void copyStudentId(
-            Activity activity, String studentId) {
+    private static String readStudentId(Object loginUser) {
+        String studentId = readLoginUserText(
+                loginUser, "getStudentId", "studentId");
+        if (!TextUtils.isEmpty(studentId)) {
+            return studentId;
+        }
+        // 当前版本的 LoginUser 将 studentId 序列化为 id，
+        // 对外方法名为 getLoginUserId()。
+        return readLoginUserText(
+                loginUser, "getLoginUserId",
+                "loginUserId", "userId", "id");
+    }
+
+    private static String readUnitId(Object loginUser) {
+        return readLoginUserText(
+                loginUser, "getUnitId", "unitId");
+    }
+
+    private static String readLoginUserText(
+            Object loginUser, String methodName, String... fieldNames) {
+        try {
+            Object value = CompatReflect.callMethod(loginUser, methodName);
+            if (value != null) {
+                String text = String.valueOf(value).trim();
+                if (!text.isEmpty()) {
+                    return text;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        for (String fieldName : fieldNames) {
+            try {
+                Object value = CompatReflect.getField(loginUser, fieldName);
+                if (value != null) {
+                    String text = String.valueOf(value).trim();
+                    if (!text.isEmpty()) {
+                        return text;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return "";
+    }
+
+    private static void copyIdentifier(
+            Activity activity, String label, String value) {
         try {
             Object service = activity.getSystemService(
                     Context.CLIPBOARD_SERVICE);
@@ -205,11 +291,11 @@ public final class StudentIdDisplayHook {
                         "ClipboardManager unavailable");
             }
             ((ClipboardManager) service).setPrimaryClip(
-                    ClipData.newPlainText("studentId", studentId));
-            Toast.makeText(activity, "studentId 已复制",
+                    ClipData.newPlainText(label, value));
+            Toast.makeText(activity, label + " 已复制",
                     Toast.LENGTH_SHORT).show();
         } catch (Throwable throwable) {
-            Toast.makeText(activity, "studentId 复制失败",
+            Toast.makeText(activity, label + " 复制失败",
                     Toast.LENGTH_SHORT).show();
             logFailure("copy", throwable);
         }
@@ -227,7 +313,8 @@ public final class StudentIdDisplayHook {
 
     private static void logFailure(
             String action, Throwable throwable) {
-        ModuleLog.log(TAG + " studentId display " + action + " failed: "
+        ModuleLog.log(TAG + " user identifier display "
+                + action + " failed: "
                 + throwable.getClass().getSimpleName() + ": "
                 + throwable.getMessage());
     }

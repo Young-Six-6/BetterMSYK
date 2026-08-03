@@ -89,6 +89,8 @@ public final class ModuleSettingsHook {
             "homeworkIdDisplayEnabled";
     private static final String KEY_STUDENT_ID_DISPLAY =
             "studentIdDisplayEnabled";
+    private static final String KEY_UNIT_ID_DISPLAY =
+            "unitIdDisplayEnabled";
     private static final String KEY_CUSTOM_MAC =
             "customMacInputEnabled";
     private static final String KEY_VOLUME_TRIGGER =
@@ -306,6 +308,10 @@ public final class ModuleSettingsHook {
 
     static boolean isStudentIdDisplayEnabled(Context context) {
         return getBoolean(context, KEY_STUDENT_ID_DISPLAY);
+    }
+
+    static boolean isUnitIdDisplayEnabled(Context context) {
+        return getBoolean(context, KEY_UNIT_ID_DISPLAY);
     }
 
     static boolean isCustomMacInputEnabled(Context context) {
@@ -615,6 +621,14 @@ public final class ModuleSettingsHook {
                 "“我的”页面不额外显示 studentId",
                 "学生 ID 显示已启用，重新进入“我的”页面后生效",
                 "学生 ID 显示已关闭，重新进入“我的”页面后生效");
+        buildBooleanSwitchSetting(
+                activity, content, preferences,
+                KEY_UNIT_ID_DISPLAY,
+                "显示 Unit ID",
+                "“我的”页面在学校信息后显示 unitId，点击可复制完整值",
+                "“我的”页面不额外显示 unitId",
+                "Unit ID 显示已启用，重新进入“我的”页面后生效",
+                "Unit ID 显示已关闭，重新进入“我的”页面后生效");
 
         addSettingsSectionHeader(
                 activity, content,
