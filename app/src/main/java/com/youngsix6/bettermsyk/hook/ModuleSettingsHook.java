@@ -91,7 +91,9 @@ public final class ModuleSettingsHook {
             "studentIdDisplayEnabled";
     private static final String KEY_UNIT_ID_DISPLAY =
             "unitIdDisplayEnabled";
-    private static final String KEY_CUSTOM_MAC =
+    private static final String KEY_CUSTOM_SERIAL =
+            "customSerialInputEnabled";
+    private static final String LEGACY_KEY_CUSTOM_MAC =
             "customMacInputEnabled";
     private static final String KEY_VOLUME_TRIGGER =
             "isVolumeTriggerEnabled";
@@ -113,6 +115,7 @@ public final class ModuleSettingsHook {
     private static final Map<Activity, SplashSettingsController> CONTROLLERS =
             Collections.synchronizedMap(new WeakHashMap<>());
     private static volatile boolean legacyDebugMigrationChecked;
+    private static volatile boolean customSerialMigrationChecked;
 
     private ModuleSettingsHook() {
     }
@@ -314,9 +317,10 @@ public final class ModuleSettingsHook {
         return getBoolean(context, KEY_UNIT_ID_DISPLAY);
     }
 
-    static boolean isCustomMacInputEnabled(Context context) {
+    static boolean isCustomSerialInputEnabled(Context context) {
         ensureLegacyDebugMigrated(context);
-        return getBoolean(context, KEY_CUSTOM_MAC);
+        ensureCustomSerialSettingMigrated(context);
+        return getBoolean(context, KEY_CUSTOM_SERIAL);
     }
 
     static boolean isVolumeTriggerEnabled(Context context) {
@@ -377,6 +381,7 @@ public final class ModuleSettingsHook {
     private static void buildSettingsContent(
             Activity activity, LinearLayout settingsContainer) {
         ensureLegacyDebugMigrated(activity);
+        ensureCustomSerialSettingMigrated(activity);
         ScrollView scrollView = new ScrollView(activity);
         scrollView.setFillViewport(true);
         LinearLayout content = new LinearLayout(activity);
@@ -496,12 +501,12 @@ public final class ModuleSettingsHook {
                 "ID法登录已关闭，重新进入登录页后生效");
         buildBooleanSwitchSetting(
                 activity, content, preferences,
-                KEY_CUSTOM_MAC,
-                "自定义设备 MAC",
-                "登录页显示自定义 MAC 输入框；和多用户登录联动",
-                "不显示自定义 MAC；关闭时会联动关闭多用户登录",
-                "自定义设备 MAC 已启用，和多用户登录联动",
-                "自定义设备 MAC 已关闭，多用户登录也已关闭",
+                KEY_CUSTOM_SERIAL,
+                "自定义设备序列号",
+                "登录页显示自定义序列号输入框；覆盖 padLogin 和 anhuiPadLogin 的 sn，并和多用户登录联动",
+                "不显示自定义序列号；关闭时会联动关闭多用户登录",
+                "自定义设备序列号已启用，和多用户登录联动",
+                "自定义设备序列号已关闭，多用户登录也已关闭",
                 linkedSettings);
 
         addSettingsSectionHeader(
@@ -960,11 +965,11 @@ public final class ModuleSettingsHook {
             }
             SharedPreferences.Editor editor =
                     preferences.edit().putBoolean(key, checked);
-            if (KEY_CUSTOM_MAC.equals(key) && !checked) {
+            if (KEY_CUSTOM_SERIAL.equals(key) && !checked) {
                 editor.putBoolean(KEY_MULTI_USER_LOGIN, false);
             }
             editor.apply();
-            if (KEY_CUSTOM_MAC.equals(key)
+            if (KEY_CUSTOM_SERIAL.equals(key)
                     && !checked
                     && linkedSettings != null) {
                 linkedSettings.setMultiUserChecked(false);
@@ -977,9 +982,9 @@ public final class ModuleSettingsHook {
         });
         card.setOnClickListener(v ->
                 toggle.setChecked(!toggle.isChecked()));
-        if (KEY_CUSTOM_MAC.equals(key)
+        if (KEY_CUSTOM_SERIAL.equals(key)
                 && linkedSettings != null) {
-            linkedSettings.registerCustomMac(toggle);
+            linkedSettings.registerCustomSerial(toggle);
         }
     }
 
@@ -1422,9 +1427,9 @@ public final class ModuleSettingsHook {
         boolean enabled = preferences.getBoolean(
                 KEY_MULTI_USER_LOGIN, false);
         if (enabled && !preferences.getBoolean(
-                KEY_CUSTOM_MAC, false)) {
+                KEY_CUSTOM_SERIAL, false)) {
             preferences.edit()
-                    .putBoolean(KEY_CUSTOM_MAC, true)
+                    .putBoolean(KEY_CUSTOM_SERIAL, true)
                     .apply();
         }
         accountSwitch.setChecked(enabled);
@@ -1437,15 +1442,15 @@ public final class ModuleSettingsHook {
             SharedPreferences.Editor editor = preferences.edit()
                     .putBoolean(KEY_MULTI_USER_LOGIN, checked);
             if (checked) {
-                editor.putBoolean(KEY_CUSTOM_MAC, true);
+                editor.putBoolean(KEY_CUSTOM_SERIAL, true);
             }
             editor.apply();
             if (checked) {
-                linkedSettings.setCustomMacChecked(true);
+                linkedSettings.setCustomSerialChecked(true);
             }
             Toast.makeText(activity,
                     checked
-                            ? "多用户登录已启用，并联动开启自定义设备 MAC"
+                            ? "多用户登录已启用，并联动开启自定义设备序列号"
                             : "多用户登录已停用，已保存账号不会删除",
                     Toast.LENGTH_SHORT).show();
             XposedBridge.log(TAG
@@ -1529,7 +1534,7 @@ public final class ModuleSettingsHook {
 
     private static final class LinkedSettingsController {
         private Switch multiUserSwitch;
-        private Switch customMacSwitch;
+        private Switch customSerialSwitch;
         private boolean syncing;
 
         boolean isSyncing() {
@@ -1540,16 +1545,16 @@ public final class ModuleSettingsHook {
             multiUserSwitch = toggle;
         }
 
-        void registerCustomMac(Switch toggle) {
-            customMacSwitch = toggle;
+        void registerCustomSerial(Switch toggle) {
+            customSerialSwitch = toggle;
         }
 
         void setMultiUserChecked(boolean checked) {
             setChecked(multiUserSwitch, checked);
         }
 
-        void setCustomMacChecked(boolean checked) {
-            setChecked(customMacSwitch, checked);
+        void setCustomSerialChecked(boolean checked) {
+            setChecked(customSerialSwitch, checked);
         }
 
         private void setChecked(Switch toggle, boolean checked) {
@@ -1934,8 +1939,8 @@ public final class ModuleSettingsHook {
     private static void updateMultiUserSummary(
             TextView summary, boolean enabled) {
         summary.setText(enabled
-                ? "和自定义设备 MAC 联动；加密保存多组密码账号及ID账号"
-                : "不显示模块的密码/ID账号选择器；开启时会联动开启自定义 MAC");
+                ? "和自定义设备序列号联动；加密保存多组密码账号及ID账号"
+                : "不显示模块的密码/ID账号选择器；开启时会联动开启自定义序列号");
     }
 
     private static void updateCompactModeSummary(
@@ -2142,7 +2147,7 @@ public final class ModuleSettingsHook {
                         KEY_PROTOCOL_OVERRIDE,
                         KEY_DEBUG_CODE_GENERATOR,
                         KEY_HOMEWORK_ID_DISPLAY,
-                        KEY_CUSTOM_MAC
+                        KEY_CUSTOM_SERIAL
                 };
                 for (String key : migratedKeys) {
                     if (!preferences.contains(key)) {
@@ -2157,6 +2162,34 @@ public final class ModuleSettingsHook {
             legacyDebugMigrationChecked = migrated;
             XposedBridge.log(TAG + " legacy debug settings migrated: "
                     + migrated + ", previouslyEnabled=" + legacyEnabled);
+        }
+    }
+
+    private static void ensureCustomSerialSettingMigrated(
+            Context context) {
+        if (customSerialMigrationChecked) {
+            return;
+        }
+        synchronized (ModuleSettingsHook.class) {
+            if (customSerialMigrationChecked) {
+                return;
+            }
+            SharedPreferences preferences = context.getSharedPreferences(
+                    SP_FILE, Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = preferences.edit();
+            if (!preferences.contains(KEY_CUSTOM_SERIAL)
+                    && preferences.contains(LEGACY_KEY_CUSTOM_MAC)) {
+                editor.putBoolean(
+                        KEY_CUSTOM_SERIAL,
+                        preferences.getBoolean(
+                                LEGACY_KEY_CUSTOM_MAC, false));
+            }
+            boolean migrated = editor
+                    .remove(LEGACY_KEY_CUSTOM_MAC)
+                    .commit();
+            customSerialMigrationChecked = migrated;
+            ModuleLog.log(TAG
+                    + " custom serial setting migration=" + migrated);
         }
     }
 

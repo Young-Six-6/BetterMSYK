@@ -18,68 +18,79 @@ import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
 
-import java.util.Locale;
-
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 自定义设备 MAC
+ * 自定义登录请求中的设备序列号（sn）。
  */
-public final class CustomMacHook {
+public final class CustomSerialHook {
 
     private static final String TAG = "[BetterMSYK]";
     private static final String SP_FILE = "system_properties";
-    private static final String KEY_CUSTOM_MAC = "debugCustomMac";
+    private static final String KEY_CUSTOM_SERIAL = "debugCustomSerial";
     private static final String LOGIN_ACTIVITY =
             "com.zdsoft.newsquirrel.android.activity.LoginActivity";
-    private static final String MAC_UTIL =
-            "com.zdsoft.newsquirrel.android.util.MacAddressUtils";
-    private static final String INPUT_TAG = "bettermsyk_custom_mac_input";
-    private static boolean customMacLogged;
+    private static final String REQUEST_UTILS =
+            "com.zdsoft.newsquirrel.android.model.RequestUtils";
+    private static final String INPUT_TAG = "bettermsyk_custom_serial_input";
+    private static boolean customSerialLogged;
 
-    private CustomMacHook() {
+    private CustomSerialHook() {
     }
 
     public static void init(XC_LoadPackage.LoadPackageParam lpparam) {
-        hookMacResolver(lpparam);
+        hookLoginRequestSerial(lpparam);
         hookLoginActivity(lpparam);
         hookLoginSubmission(lpparam);
     }
 
-    private static void hookMacResolver(XC_LoadPackage.LoadPackageParam lpparam) {
+    private static void hookLoginRequestSerial(
+            XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> macClass = CompatReflect.findClass(
-                    MAC_UTIL, lpparam.classLoader);
-            XposedBridge.hookMethod(
-                    CompatReflect.findMethodExact(
-                            macClass, "getMac", Context.class),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            Context context = param.args != null
-                                    && param.args.length > 0
-                                    && param.args[0] instanceof Context
-                                    ? (Context) param.args[0]
-                                    : null;
-                            String customMac = getEnabledCustomMac(context);
-                            if (customMac == null) {
-                                return;
-                            }
-                            param.setResult(customMac);
-                            if (!customMacLogged) {
-                                customMacLogged = true;
-                                XposedBridge.log(TAG + " custom MAC applied");
-                            }
-                        }
-                    }
-            );
-            XposedBridge.log(TAG + " CustomMacHook MAC resolver registered.");
+            Class<?> requestUtils = CompatReflect.findClass(
+                    REQUEST_UTILS, lpparam.classLoader);
+            hookRequestSerialArgument(requestUtils, "loadUser", 5);
+            hookRequestSerialArgument(requestUtils, "anhuiPadLogin", 4);
+            ModuleLog.log(TAG
+                    + " CustomSerialHook login request hooks registered.");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " CustomMacHook MAC resolver failed: "
+            ModuleLog.log(TAG
+                    + " CustomSerialHook login request hooks failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
+    }
+
+    private static void hookRequestSerialArgument(
+            Class<?> requestUtils, String methodName, int serialIndex) {
+        XposedBridge.hookAllMethods(
+                requestUtils, methodName, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null
+                                || param.args.length <= serialIndex
+                                || !(param.args[serialIndex]
+                                instanceof String)) {
+                            return;
+                        }
+                        Context context = param.args.length > 0
+                                && param.args[0] instanceof Context
+                                ? (Context) param.args[0] : null;
+                        String customSerial =
+                                getEnabledCustomSerial(context);
+                        if (customSerial == null) {
+                            return;
+                        }
+                        param.args[serialIndex] = customSerial;
+                        if (!customSerialLogged) {
+                            customSerialLogged = true;
+                            ModuleLog.record(TAG
+                                    + " custom serial applied to "
+                                    + methodName);
+                        }
+                    }
+                });
     }
 
     private static void hookLoginActivity(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -94,23 +105,24 @@ public final class CustomMacHook {
                         protected void afterHookedMethod(MethodHookParam param) {
                             Activity activity = (Activity) param.thisObject;
                             if (ModuleSettingsHook
-                                    .isCustomMacInputEnabled(activity)
+                                    .isCustomSerialInputEnabled(activity)
                                     || ModuleSettingsHook
                                     .isMultiUserLoginEnabled(activity)) {
-                                injectCustomMacInput(activity);
+                                injectCustomSerialInput(activity);
                             }
                         }
                     }
             );
-            XposedBridge.log(TAG + " CustomMacHook login UI registered.");
+            ModuleLog.log(TAG
+                    + " CustomSerialHook login UI registered.");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " CustomMacHook login UI failed: "
+            ModuleLog.log(TAG + " CustomSerialHook login UI failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
 
     /**
-     * 登录按钮并不保证让 MAC 输入框失去焦点，因此必须在真正提交前再次校验。
+     * 登录按钮并不保证让序列号输入框失去焦点，因此必须在真正提交前再次校验。
      * 同时挂 login() 是为了覆盖权限请求完成后直接继续登录的路径。
      */
     private static void hookLoginSubmission(
@@ -122,7 +134,7 @@ public final class CustomMacHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     Activity activity = (Activity) param.thisObject;
-                    if (!validateMacBeforeLogin(activity)) {
+                    if (!validateSerialBeforeLogin(activity)) {
                         param.setResult(null);
                     }
                 }
@@ -135,14 +147,15 @@ public final class CustomMacHook {
                     CompatReflect.findMethodExact(activityClass, "login"),
                     validator);
             ModuleLog.log(TAG
-                    + " CustomMacHook login validation registered.");
+                    + " CustomSerialHook login validation registered.");
         } catch (Throwable t) {
-            ModuleLog.log(TAG + " CustomMacHook login validation failed: "
+            ModuleLog.log(TAG
+                    + " CustomSerialHook login validation failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
 
-    private static void injectCustomMacInput(Activity activity) {
+    private static void injectCustomSerialInput(Activity activity) {
         try {
             View decor = activity.getWindow().getDecorView();
             if (decor.findViewWithTag(INPUT_TAG) != null) {
@@ -161,7 +174,8 @@ public final class CustomMacHook {
                     || !(passLayoutView instanceof LinearLayout)
                     || !(passEditView instanceof EditText)
                     || !(passImageView instanceof ImageView)) {
-                XposedBridge.log(TAG + " custom MAC input anchors missing");
+                ModuleLog.log(TAG
+                        + " custom serial input anchors missing");
                 return;
             }
 
@@ -233,7 +247,7 @@ public final class CustomMacHook {
             }
             final EditText input = createdInput;
             input.setBackground(passEdit.getBackground());
-            input.setHint("自定义mac");
+            input.setHint("自定义序列号");
             input.setSingleLine(true);
             input.setGravity(passEdit.getGravity());
             input.setTextSize(
@@ -267,8 +281,9 @@ public final class CustomMacHook {
                             1f));
 
             SharedPreferences preferences = getPreferences(activity);
-            String savedMac = preferences.getString(KEY_CUSTOM_MAC, "");
-            input.setText(savedMac);
+            String savedSerial = preferences.getString(
+                    KEY_CUSTOM_SERIAL, "");
+            input.setText(savedSerial);
             input.setSelection(input.length());
             input.addTextChangedListener(new TextWatcher() {
                 @Override
@@ -292,9 +307,10 @@ public final class CustomMacHook {
                 @Override
                 public void afterTextChanged(Editable text) {
                     preferences.edit()
-                            .putString(KEY_CUSTOM_MAC, text.toString().trim())
+                            .putString(KEY_CUSTOM_SERIAL,
+                                    text.toString().trim())
                             .apply();
-                    customMacLogged = false;
+                    customSerialLogged = false;
                 }
             });
             input.setOnFocusChangeListener((view, hasFocus) -> {
@@ -307,8 +323,8 @@ public final class CustomMacHook {
             row.addView(icon);
             row.addView(input);
             root.addView(row);
-            // 原密码分隔线随后会被移动到 MAC 行下方，用作 MAC 行的底线；
-            // 因此在原位置复制一条，继续分隔密码行与 MAC 行。
+            // 原密码分隔线随后会被移动到序列号行下方，作为该行底线；
+            // 因此在原位置复制一条，继续分隔密码行与序列号行。
             if (passwordDivider != null) {
                 View separator = cloneDivider(activity, passwordDivider);
                 if (separator != null) {
@@ -332,7 +348,7 @@ public final class CustomMacHook {
                     passwordDivider, row.getId(), formRowWidth);
             row.post(() -> {
                 // 注入发生在首次布局前时，logo/root 的宽度仍可能为 0。
-                // 布局完成后重新取实际表单宽度，避免 MAC 底线退回全屏宽度。
+                // 布局完成后重新取实际表单宽度，避免序列号底线退回全屏宽度。
                 constrainDividerToRow(
                         passwordDivider,
                         row.getId(),
@@ -343,20 +359,20 @@ public final class CustomMacHook {
                             root, input, passwordDivider));
                 }
             });
-            XposedBridge.log(TAG + " custom MAC input injected");
+            ModuleLog.log(TAG + " custom serial input injected");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " custom MAC input failed: "
+            ModuleLog.log(TAG + " custom serial input failed: "
                     + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
     }
 
-    private static boolean validateMacBeforeLogin(Activity activity) {
+    private static boolean validateSerialBeforeLogin(Activity activity) {
         if (activity == null
-                || (!ModuleSettingsHook.isCustomMacInputEnabled(activity)
+                || (!ModuleSettingsHook.isCustomSerialInputEnabled(activity)
                 && !ModuleSettingsHook.isMultiUserLoginEnabled(activity))) {
             return true;
         }
-        EditText input = findMacInput(activity);
+        EditText input = findSerialInput(activity);
         if (input == null) {
             // 输入框尚未完成注入时不拦截官方登录流程。
             return true;
@@ -372,16 +388,17 @@ public final class CustomMacHook {
             input.setError(null);
             return true;
         }
-        String normalized = normalizeMac(raw);
+        String normalized = normalizeSerial(raw);
         if (normalized == null) {
-            String message = "MAC格式应为 AA:BB:CC:DD:EE:FF";
+            String message = "序列号不能包含控制字符，且最多 128 个字符";
             input.setError(message);
             input.requestFocus();
             if (showToast) {
                 Toast.makeText(input.getContext(), message,
                         Toast.LENGTH_SHORT).show();
             }
-            ModuleLog.record(TAG + " login blocked by invalid custom MAC");
+            ModuleLog.record(TAG
+                    + " login blocked by invalid custom serial");
             return false;
         }
         input.setError(null);
@@ -392,7 +409,7 @@ public final class CustomMacHook {
         return true;
     }
 
-    static EditText findMacInput(Activity activity) {
+    static EditText findSerialInput(Activity activity) {
         View tagged = activity.getWindow().getDecorView()
                 .findViewWithTag(INPUT_TAG);
         if (!(tagged instanceof ViewGroup)) {
@@ -533,24 +550,25 @@ public final class CustomMacHook {
         return divider;
     }
 
-    static String getEnabledCustomMac(Context context) {
+    static String getEnabledCustomSerial(Context context) {
         if (context == null) {
             return null;
         }
-        if (ModuleSettingsHook.isCustomMacInputEnabled(context)
+        if (ModuleSettingsHook.isCustomSerialInputEnabled(context)
                 || ModuleSettingsHook
                 .isMultiUserLoginEnabled(context)) {
             String stored = getPreferences(context)
-                    .getString(KEY_CUSTOM_MAC, "");
-            String debugMac = normalizeMac(stored);
-            if (debugMac != null) {
-                return debugMac;
+                    .getString(KEY_CUSTOM_SERIAL, "");
+            String customSerial = normalizeSerial(stored);
+            if (!TextUtils.isEmpty(customSerial)) {
+                return customSerial;
             }
         }
-        return MultiUserLoginHook.getSelectedProfileMac(context);
+        return MultiUserLoginHook.getSelectedProfileSerial(context);
     }
 
-    static void setLoginMacInput(Activity activity, String mac) {
+    static void setLoginSerialInput(
+            Activity activity, String serialNumber) {
         if (activity == null) {
             return;
         }
@@ -564,7 +582,8 @@ public final class CustomMacHook {
             View child = row.getChildAt(index);
             if (child instanceof EditText) {
                 EditText input = (EditText) child;
-                String value = mac == null ? "" : mac;
+                String value = serialNumber == null
+                        ? "" : serialNumber;
                 input.setText(value);
                 input.setSelection(input.length());
                 return;
@@ -572,25 +591,20 @@ public final class CustomMacHook {
         }
     }
 
-    static String normalizeMac(String value) {
+    static String normalizeSerial(String value) {
         if (value == null) {
             return null;
         }
-        String compact = value.trim()
-                .replace(":", "")
-                .replace("-", "");
-        if (!compact.matches("(?i)[0-9a-f]{12}")) {
+        String normalized = value.trim();
+        if (normalized.length() > 128) {
             return null;
         }
-        String upper = compact.toUpperCase(Locale.ROOT);
-        StringBuilder formatted = new StringBuilder(17);
-        for (int index = 0; index < upper.length(); index += 2) {
-            if (formatted.length() > 0) {
-                formatted.append(':');
+        for (int index = 0; index < normalized.length(); index++) {
+            if (Character.isISOControl(normalized.charAt(index))) {
+                return null;
             }
-            formatted.append(upper, index, index + 2);
         }
-        return formatted.toString();
+        return normalized;
     }
 
     private static int getId(Context context, String name) {

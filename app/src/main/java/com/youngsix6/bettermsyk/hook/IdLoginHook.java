@@ -444,7 +444,7 @@ public final class IdLoginHook {
             LinearLayout userLayout = (LinearLayout) userLayoutView;
             LinearLayout passLayout = (LinearLayout) passLayoutView;
             EditText passEdit = (EditText) passEditView;
-            // 自定义 MAC 由密码输入框克隆而来；ID 也使用同一个视觉基准，
+            // 自定义序列号由密码输入框克隆而来；ID 也使用同一个视觉基准，
             // 保持输入区域、内边距和文字位置一致。
             EditText idEdit = buildIdInput(activity, passEdit);
             idEdit.setVisibility(View.VISIBLE);
@@ -739,7 +739,7 @@ public final class IdLoginHook {
                     ? View.VISIBLE : View.GONE);
         }
         if (idModeEnabled) {
-            idRow.post(() -> alignIdRowWithMac(
+            idRow.post(() -> alignIdRowWithSerialInput(
                     activity, idRow, idDivider, idEdit));
         } else {
             idRow.setTranslationX(0f);
@@ -763,22 +763,22 @@ public final class IdLoginHook {
         button.setBackground(background);
     }
 
-    private static void alignIdRowWithMac(
+    private static void alignIdRowWithSerialInput(
             Activity activity, LinearLayout idRow,
             View idDivider, EditText idEdit) {
-        EditText macInput = CustomMacHook.findMacInput(activity);
-        if (macInput == null || macInput.getWidth() <= 0
+        EditText serialInput = CustomSerialHook.findSerialInput(activity);
+        if (serialInput == null || serialInput.getWidth() <= 0
                 || idEdit.getWidth() <= 0) {
             return;
         }
-        int[] macLocation = new int[2];
+        int[] serialLocation = new int[2];
         int[] idLocation = new int[2];
-        macInput.getLocationOnScreen(macLocation);
+        serialInput.getLocationOnScreen(serialLocation);
         idEdit.getLocationOnScreen(idLocation);
         // ID 输入框右侧还有账号选择和清除按钮，按中心对齐会把整行
-        // 额外推向右侧；这里与密码/MAC 输入区域的左边界对齐。
+        // 额外推向右侧；这里与密码/序列号输入区域的左边界对齐。
         float targetTranslation = idRow.getTranslationX()
-                + macLocation[0] - idLocation[0];
+                + serialLocation[0] - idLocation[0];
         View rootView = activity.findViewById(
                 getId(activity, "layout_root"));
         if (rootView != null && rootView.getWidth() > 0) {
@@ -792,11 +792,11 @@ public final class IdLoginHook {
                 && idDivider.getWidth() > 0) {
             int[] rootLocation = new int[2];
             rootView.getLocationOnScreen(rootLocation);
-            float macCenterInRoot = macLocation[0] - rootLocation[0]
-                    + macInput.getWidth() / 2f;
+            float serialCenterInRoot = serialLocation[0] - rootLocation[0]
+                    + serialInput.getWidth() / 2f;
             float dividerCenter = idDivider.getLeft()
                     + idDivider.getWidth() / 2f;
-            float dividerTranslation = macCenterInRoot - dividerCenter;
+            float dividerTranslation = serialCenterInRoot - dividerCenter;
             dividerTranslation = Math.max(
                     -idDivider.getLeft(),
                     Math.min(rootView.getWidth() - idDivider.getRight(),
@@ -1406,10 +1406,7 @@ public final class IdLoginHook {
                         activity, "checkPermissionReadPhoneState", activity));
         String macAddress = "";
         String sdkVersion = "-1";
-        String configuredMac = CustomMacHook.getEnabledCustomMac(activity);
-        if (!TextUtils.isEmpty(configuredMac)) {
-            macAddress = configuredMac;
-        } else if (phonePermission) {
+        if (phonePermission) {
             Class<?> macClass = CompatReflect.findClass(
                     MAC_UTIL, activity.getClassLoader());
             Object value = CompatReflect.callStaticMethod(
@@ -1424,10 +1421,11 @@ public final class IdLoginHook {
                 CompatReflect.callMethod(activity, "isLin"));
         boolean linAndTen = Boolean.TRUE.equals(
                 CompatReflect.callMethod(activity, "isLinAndTen"));
-        String serialNumber = "";
+        String serialNumber = CustomSerialHook
+                .getEnabledCustomSerial(activity);
         Class<?> applicationClass = CompatReflect.findClass(
                 APPLICATION_CLASS, activity.getClassLoader());
-        if (phonePermission) {
+        if (TextUtils.isEmpty(serialNumber) && phonePermission) {
             if (linAndTen) {
                 serialNumber = stringValue(CompatReflect.getStaticField(
                         applicationClass, "serialNumStr"));
@@ -1437,7 +1435,7 @@ public final class IdLoginHook {
                 serialNumber = stringValue(CompatReflect.callStaticMethod(
                         versionClass, "getSerialNumber"));
             }
-        } else if (lin) {
+        } else if (TextUtils.isEmpty(serialNumber) && lin) {
             serialNumber = stringValue(CompatReflect.getStaticField(
                     applicationClass, "serialNumStr"));
         }

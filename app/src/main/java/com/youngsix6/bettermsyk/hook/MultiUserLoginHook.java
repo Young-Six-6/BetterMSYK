@@ -47,8 +47,8 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * 为登录页增加多账号选择，并在登录成功后保存账号、密码和 MAC
- * 密码与 MAC 使用 Android Keystore AES-GCM 加密，用户名仅用于列表展示。
+ * 为登录页增加多账号选择，并在登录成功后保存账号、密码和设备序列号。
+ * 密码与序列号使用 Android Keystore AES-GCM 加密，用户名仅用于列表展示。
  */
 public final class MultiUserLoginHook {
 
@@ -96,7 +96,7 @@ public final class MultiUserLoginHook {
         }
     }
 
-    static String getSelectedProfileMac(Context context) {
+    static String getSelectedProfileSerial(Context context) {
         if (context == null
                 || !ModuleSettingsHook.isMultiUserLoginEnabled(context)) {
             return null;
@@ -109,7 +109,7 @@ public final class MultiUserLoginHook {
         }
         Profile profile = findProfile(
                 loadProfilesSafely(context), selected);
-        return profile == null ? null : profile.mac;
+        return profile == null ? null : profile.serialNumber;
     }
 
     private static void hookLoginPage(
@@ -157,10 +157,10 @@ public final class MultiUserLoginHook {
                         protected void beforeHookedMethod(
                                 MethodHookParam param) {
                             if (param.args == null
-                                    || param.args.length < 3
+                                    || param.args.length < 6
                                     || !(param.args[0] instanceof String)
                                     || !(param.args[1] instanceof String)
-                                    || !(param.args[2] instanceof String)) {
+                                    || !(param.args[5] instanceof String)) {
                                 return;
                             }
                             Context context = modelContext(
@@ -171,19 +171,20 @@ public final class MultiUserLoginHook {
                                 takePendingForModel(param.thisObject);
                                 return;
                             }
-                            String preferredMac =
-                                    CustomMacHook
-                                            .getEnabledCustomMac(context);
-                            if (preferredMac != null) {
-                                param.args[2] = preferredMac;
+                            String preferredSerial =
+                                    CustomSerialHook
+                                            .getEnabledCustomSerial(context);
+                            if (preferredSerial != null) {
+                                param.args[5] = preferredSerial;
                             }
                             String username =
                                     ((String) param.args[0]).trim();
                             String password =
                                     ((String) param.args[1]).trim();
-                            String mac = param.args[2] instanceof String
-                                    ? normalizeMacOrEmpty(
-                                            (String) param.args[2])
+                            String serialNumber =
+                                    param.args[5] instanceof String
+                                    ? normalizeSerialOrEmpty(
+                                            (String) param.args[5])
                                     : "";
                             if (username.isEmpty()
                                     || password.isEmpty()) {
@@ -195,7 +196,7 @@ public final class MultiUserLoginHook {
                                             context,
                                             username,
                                             password,
-                                            mac,
+                                            serialNumber,
                                             System.currentTimeMillis());
                             synchronized (PENDING) {
                                 PENDING.put(param.thisObject, pending);
@@ -232,7 +233,7 @@ public final class MultiUserLoginHook {
                                     new Profile(
                                             pending.username,
                                             pending.password,
-                                            pending.mac,
+                                            pending.serialNumber,
                                             System.currentTimeMillis()));
                         }
                     });
@@ -264,7 +265,7 @@ public final class MultiUserLoginHook {
                                     new Profile(
                                             pending.username,
                                             pending.password,
-                                            pending.mac,
+                                            pending.serialNumber,
                                             System.currentTimeMillis()));
                         }
                     });
@@ -631,13 +632,13 @@ public final class MultiUserLoginHook {
             username.setTypeface(Typeface.DEFAULT_BOLD);
             labels.addView(username);
 
-            TextView mac = new TextView(activity);
-            mac.setText(profile.mac.isEmpty()
-                    ? "MAC：使用设备当前值"
-                    : "MAC：" + profile.mac);
-            mac.setTextSize(12);
-            mac.setTextColor(Color.parseColor("#68756C"));
-            labels.addView(mac);
+            TextView serial = new TextView(activity);
+            serial.setText(profile.serialNumber.isEmpty()
+                    ? "序列号：使用设备当前值"
+                    : "序列号：" + profile.serialNumber);
+            serial.setTextSize(12);
+            serial.setTextColor(Color.parseColor("#68756C"));
+            labels.addView(serial);
             row.addView(labels,
                     new LinearLayout.LayoutParams(
                             0,
@@ -678,7 +679,7 @@ public final class MultiUserLoginHook {
                 boolean removed = removeProfile(
                         activity, profile.username);
                 if (removed && selected) {
-                    CustomMacHook.setLoginMacInput(
+                    CustomSerialHook.setLoginSerialInput(
                             activity, "");
                 }
                 PopupWindow popup =
@@ -724,8 +725,8 @@ public final class MultiUserLoginHook {
                 passwordInput.setText(profile.password);
                 passwordInput.setSelection(
                         passwordInput.length());
-                CustomMacHook.setLoginMacInput(
-                        activity, profile.mac);
+                CustomSerialHook.setLoginSerialInput(
+                        activity, profile.serialNumber);
             } finally {
                 applyingProfile = false;
             }
@@ -786,13 +787,14 @@ public final class MultiUserLoginHook {
                 JSONObject secret = decryptSecret(encrypted);
                 String password =
                         secret.optString("password", "");
-                String mac = normalizeMacOrEmpty(
-                        secret.optString("mac", ""));
+                // 旧版本 secret.mac 是设备 MAC，不能迁移成登录 sn。
+                String serialNumber = normalizeSerialOrEmpty(
+                        secret.optString("serialNumber", ""));
                 if (!password.isEmpty()) {
                     loaded.add(new Profile(
                             username,
                             password,
-                            mac,
+                            serialNumber,
                             object.optLong(
                                     "updatedAt", 0L)));
                 }
@@ -875,7 +877,7 @@ public final class MultiUserLoginHook {
                     "secret",
                     encryptSecret(
                             profile.password,
-                            profile.mac));
+                            profile.serialNumber));
             array.put(object);
         }
         boolean committed = getPreferences(context).edit()
@@ -890,10 +892,10 @@ public final class MultiUserLoginHook {
     }
 
     private static String encryptSecret(
-            String password, String mac) throws Exception {
+            String password, String serialNumber) throws Exception {
         JSONObject secret = new JSONObject();
         secret.put("password", password);
-        secret.put("mac", mac);
+        secret.put("serialNumber", serialNumber);
         Cipher cipher = Cipher.getInstance(
                 "AES/GCM/NoPadding");
         cipher.init(
@@ -979,8 +981,8 @@ public final class MultiUserLoginHook {
         }
     }
 
-    private static String normalizeMacOrEmpty(String value) {
-        String normalized = CustomMacHook.normalizeMac(value);
+    private static String normalizeSerialOrEmpty(String value) {
+        String normalized = CustomSerialHook.normalizeSerial(value);
         return normalized == null ? "" : normalized;
     }
 
@@ -1042,17 +1044,17 @@ public final class MultiUserLoginHook {
     private static final class Profile {
         final String username;
         final String password;
-        final String mac;
+        final String serialNumber;
         final long updatedAt;
 
         Profile(
                 String username,
                 String password,
-                String mac,
+                String serialNumber,
                 long updatedAt) {
             this.username = username;
             this.password = password;
-            this.mac = mac;
+            this.serialNumber = serialNumber;
             this.updatedAt = updatedAt;
         }
     }
@@ -1061,19 +1063,19 @@ public final class MultiUserLoginHook {
         final Context context;
         final String username;
         final String password;
-        final String mac;
+        final String serialNumber;
         final long createdAt;
 
         PendingCredential(
                 Context context,
                 String username,
                 String password,
-                String mac,
+                String serialNumber,
                 long createdAt) {
             this.context = context;
             this.username = username;
             this.password = password;
-            this.mac = mac;
+            this.serialNumber = serialNumber;
             this.createdAt = createdAt;
         }
     }

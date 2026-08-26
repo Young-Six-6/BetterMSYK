@@ -36,7 +36,7 @@ public class MainHook implements IXposedHookLoadPackage {
         UpdateControlHook.init(lpparam);
         CacheControlHook.init(lpparam);
         SplashImageHook.init(lpparam);
-        CustomMacHook.init(lpparam);
+        CustomSerialHook.init(lpparam);
         MultiUserLoginHook.init(lpparam);
         IdLoginHook.init(lpparam);
         ProtocolOverrideHook.init(lpparam);
