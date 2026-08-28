@@ -317,7 +317,9 @@ public final class CustomSerialHook {
                 if (hasFocus) {
                     return;
                 }
-                validateAndNormalizeInput(input, false);
+                if (validateAndNormalizeInput(input, false)) {
+                    persistSerial(input, true, true);
+                }
             });
 
             row.addView(icon);
@@ -377,7 +379,11 @@ public final class CustomSerialHook {
             // 输入框尚未完成注入时不拦截官方登录流程。
             return true;
         }
-        return validateAndNormalizeInput(input, true);
+        boolean valid = validateAndNormalizeInput(input, true);
+        if (valid) {
+            persistSerial(input, true, true);
+        }
+        return valid;
     }
 
     private static boolean validateAndNormalizeInput(
@@ -407,6 +413,35 @@ public final class CustomSerialHook {
             input.setSelection(input.length());
         }
         return true;
+    }
+
+    private static void persistSerial(
+            EditText input, boolean synchronous,
+            boolean updateSelectedProfile) {
+        String value = input.getText() == null
+                ? "" : input.getText().toString().trim();
+        SharedPreferences.Editor editor = getPreferences(
+                input.getContext()).edit().putString(
+                KEY_CUSTOM_SERIAL, value);
+        boolean saved;
+        if (synchronous) {
+            saved = editor.commit();
+        } else {
+            editor.apply();
+            saved = true;
+        }
+        if (!saved) {
+            ModuleLog.record(TAG
+                    + " custom serial preference commit failed");
+            return;
+        }
+        customSerialLogged = false;
+        if (updateSelectedProfile
+                && !IdLoginHook.isIdLoginModeSelected(
+                input.getContext())) {
+            MultiUserLoginHook.updateSelectedProfileSerial(
+                    input.getContext(), value);
+        }
     }
 
     static EditText findSerialInput(Activity activity) {
@@ -565,6 +600,16 @@ public final class CustomSerialHook {
             }
         }
         return MultiUserLoginHook.getSelectedProfileSerial(context);
+    }
+
+    static String getStoredSerial(Context context) {
+        if (context == null) {
+            return "";
+        }
+        String stored = getPreferences(context).getString(
+                KEY_CUSTOM_SERIAL, "");
+        String normalized = normalizeSerial(stored);
+        return normalized == null ? "" : normalized;
     }
 
     static void setLoginSerialInput(

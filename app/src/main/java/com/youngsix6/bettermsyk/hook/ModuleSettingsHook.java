@@ -57,6 +57,7 @@ public final class ModuleSettingsHook {
             "com.youngsix6.bettermsyk";
     private static final String SP_FILE = "system_properties";
     private static final String KEY_DISABLE_UPDATE = "disableAppUpdate";
+    private static final boolean DEFAULT_DISABLE_UPDATE = true;
     private static final String KEY_DISABLE_GLOBAL_CACHE = "disableGlobalCache";
     private static final String KEY_MULTI_USER_LOGIN = "multiUserLoginEnabled";
     private static final String KEY_ID_LOGIN = "idLoginEnabled";
@@ -220,7 +221,7 @@ public final class ModuleSettingsHook {
 
     static boolean isUpdateDisabled(Context context) {
         return context.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE)
-                .getBoolean(KEY_DISABLE_UPDATE, false);
+                .getBoolean(KEY_DISABLE_UPDATE, DEFAULT_DISABLE_UPDATE);
     }
 
     static boolean isCustomSplashEnabled(Context context) {
@@ -466,7 +467,8 @@ public final class ModuleSettingsHook {
 
         SharedPreferences preferences =
                 activity.getSharedPreferences(SP_FILE, Context.MODE_PRIVATE);
-        boolean disabled = preferences.getBoolean(KEY_DISABLE_UPDATE, false);
+        boolean disabled = preferences.getBoolean(
+                KEY_DISABLE_UPDATE, DEFAULT_DISABLE_UPDATE);
         updateSwitch.setChecked(disabled);
         updateSummary(summary, disabled);
 

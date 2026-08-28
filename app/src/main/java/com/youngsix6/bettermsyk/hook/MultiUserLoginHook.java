@@ -520,6 +520,18 @@ public final class MultiUserLoginHook {
                                 .toString().trim());
             }
             if (profile != null) {
+                if (profile.serialNumber.isEmpty()) {
+                    String legacySerial =
+                            CustomSerialHook.getStoredSerial(activity);
+                    if (!legacySerial.isEmpty()) {
+                        profile = new Profile(
+                                profile.username,
+                                profile.password,
+                                legacySerial,
+                                System.currentTimeMillis());
+                        saveProfile(activity, profile);
+                    }
+                }
                 applyProfile(profile);
             } else if (selected != null
                     && !selected.isEmpty()) {
@@ -673,15 +685,8 @@ public final class MultiUserLoginHook {
                 }
             });
             remove.setOnClickListener(view -> {
-                boolean selected = profile.username.equals(
-                        preferences.getString(
-                                KEY_SELECTED_USERNAME, ""));
                 boolean removed = removeProfile(
                         activity, profile.username);
-                if (removed && selected) {
-                    CustomSerialHook.setLoginSerialInput(
-                            activity, "");
-                }
                 PopupWindow popup =
                         popupFromAncestor(rows);
                 if (popup != null) {
@@ -835,6 +840,34 @@ public final class MultiUserLoginHook {
                 logFailure("multi-user credential save", t);
             }
         }
+    }
+
+    static void updateSelectedProfileSerial(
+            Context context, String serialNumber) {
+        if (context == null
+                || !ModuleSettingsHook
+                .isMultiUserLoginEnabled(context)) {
+            return;
+        }
+        String selected = getPreferences(context).getString(
+                KEY_SELECTED_USERNAME, "");
+        if (selected == null || selected.trim().isEmpty()) {
+            return;
+        }
+        Profile profile = findProfile(
+                loadProfilesSafely(context), selected);
+        if (profile == null) {
+            return;
+        }
+        String normalized = normalizeSerialOrEmpty(serialNumber);
+        if (profile.serialNumber.equals(normalized)) {
+            return;
+        }
+        saveProfile(context, new Profile(
+                profile.username,
+                profile.password,
+                normalized,
+                System.currentTimeMillis()));
     }
 
     private static boolean removeProfile(

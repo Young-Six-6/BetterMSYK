@@ -290,7 +290,7 @@ public final class IdLoginHook {
                                     || param.args[0] == null) {
                                 return;
                             }
-                            saveIdProfile(context, param.args[0]);
+                            saveIdProfile(context, param.args[0], "");
                         }
                     });
             ModuleLog.log(TAG + " IdLoginHook success tracker registered.");
@@ -937,6 +937,10 @@ public final class IdLoginHook {
         return getPreferences(context).getBoolean(KEY_ID_LOGIN_MODE, false);
     }
 
+    static boolean isIdLoginModeSelected(Context context) {
+        return context != null && isIdModeSelected(context);
+    }
+
     private static void fillLatestIdIfUseful(Activity activity, EditText userEdit) {
         if (!ModuleSettingsHook.isMultiUserLoginEnabled(activity)) {
             return;
@@ -1095,6 +1099,9 @@ public final class IdLoginHook {
         row.setOnClickListener(view -> {
             idEdit.setText(userId);
             idEdit.setSelection(idEdit.length());
+            CustomSerialHook.setLoginSerialInput(
+                    activity,
+                    profile.optString("serialNumber", ""));
             if (popupReference[0] != null) {
                 popupReference[0].dismiss();
             }
@@ -1777,7 +1784,8 @@ public final class IdLoginHook {
                 ModuleLog.log(TAG + " id-login success user missing");
                 return;
             }
-            saveIdProfile(activity, loginUser);
+            saveIdProfile(
+                    activity, loginUser, device.serialNumber);
             int userType = ((Number) CompatReflect.callMethod(
                     loginUser, "getUserType")).intValue();
             ModuleLog.record(TAG
@@ -1962,7 +1970,9 @@ public final class IdLoginHook {
         }
     }
 
-    private static void saveIdProfile(Context context, Object loginUser) {
+    private static void saveIdProfile(
+            Context context, Object loginUser,
+            String serialOverride) {
         if (context == null || loginUser == null
                 || !ModuleSettingsHook.isMultiUserLoginEnabled(context)) {
             return;
@@ -1980,11 +1990,22 @@ public final class IdLoginHook {
                         "getUserName", "userName", "loginName");
                 String realName = readLoginUserText(loginUser,
                         "getRealName", "realName", "name");
+                String serialNumber = serialOverride == null
+                        ? "" : serialOverride.trim();
+                PendingIdLogin pending = peekPending();
+                if (pending != null
+                        && userId.equals(pending.userId)) {
+                    serialNumber = pending.device.serialNumber;
+                }
                 JSONArray array = readIdProfilesLocked(context);
                 for (int index = array.length() - 1; index >= 0; index--) {
                     JSONObject item = array.optJSONObject(index);
                     if (item != null
                             && userId.equals(item.optString("userId"))) {
+                        if (TextUtils.isEmpty(serialNumber)) {
+                            serialNumber = item.optString(
+                                    "serialNumber", "");
+                        }
                         array.remove(index);
                     }
                 }
@@ -1993,6 +2014,7 @@ public final class IdLoginHook {
                 item.put("unitId", unitId);
                 item.put("userName", userName);
                 item.put("realName", realName);
+                item.put("serialNumber", serialNumber);
                 item.put("updatedAt", System.currentTimeMillis());
                 JSONArray next = new JSONArray();
                 next.put(item);
