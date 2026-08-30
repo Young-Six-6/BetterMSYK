@@ -13,7 +13,7 @@ BetterMSYK 是“美师优课”Android 客户端的增强模块
 | 目标应用包名 | `com.zdsoft.newsquirrel` |
 | Xposed API | API 82 |
 | 推荐框架 | LSPosed |
-| 兼容框架 | 仅测试LSPatch 0.8 |
+| 兼容框架 | NPatch、LSPatch 0.8 |
 
 推荐搭配 LSPosed 进行使用。也尝试针对 LSPatch 进行了兼容处理，但不能保证成功运行。
 
@@ -78,6 +78,7 @@ BetterMSYK 是“美师优课”Android 客户端的增强模块
 ### LSPatch
 
 1. 推荐使用 LSPatch 0.8 分支，使用 BetterMSYK 修补目标 APK。
+2. 也推荐Npatch
 2. 安装修补得到的 APK。
 3. 若个别功能异常，先开启模块日志，再附带框架版本与日志反馈，使用 LSPatch 框架的issue可能会延后处理。
 
